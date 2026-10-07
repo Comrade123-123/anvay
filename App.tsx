@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -28,11 +28,24 @@ import { ReviewSubmitScreen } from './src/screens/ReviewSubmitScreen';
 import { SubmittedScreen } from './src/screens/SubmittedScreen';
 import { ToastProvider } from './src/components/Toast';
 import { DeviceFrame } from './src/components/DeviceFrame';
+import { AuthProvider, useAuth } from './src/state/AuthContext';
 
 type Route = 'splash' | 'welcome' | 'login' | 'home' | 'profile' | 'dbt' | 'journey' | 'wallet' | 'schemes' | 'scheme' | 'apply' | 'docs' | 'notifications' | 'switch' | 'seeding' | 'offline' | 'scholarships' | 'calendar' | 'chat' | 'help' | 'review' | 'submitted';
 
 export default function App() {
+  // The auth provider lives outside the screens so the saved sign-in survives every route change. When the server
+  // rejects the session anywhere in the app, we are told here and send the student back to the welcome screen.
+  const signedOut = useRef<() => void>(() => {});
+  return (
+    <AuthProvider onSignedOut={() => signedOut.current()}>
+      <AppShell onSignedOutRef={signedOut} />
+    </AuthProvider>
+  );
+}
+
+function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<() => void> }) {
   const fontsLoaded = useAppFonts();
+  const auth = useAuth();
   // Simple route state + a history stack (no navigation library). `go` pushes the current screen so Back returns to
   // whichever screen actually opened the current one; `reset` is used for top-level jumps (tabs, login, home).
   const [route, setRoute] = useState<Route>('splash');
@@ -70,6 +83,14 @@ export default function App() {
   }, []);
 
   const goWelcome = useCallback(() => reset('welcome'), [reset]);
+  onSignedOutRef.current = goWelcome;
+
+  // After the splash animation, go straight to Home if a saved session is valid, otherwise to the welcome screen.
+  const [splashDone, setSplashDone] = useState(false);
+  const onSplashFinish = useCallback(() => setSplashDone(true), []);
+  useEffect(() => {
+    if (route === 'splash' && splashDone && auth.ready) reset(auth.student ? 'home' : 'welcome');
+  }, [route, splashDone, auth.ready, auth.student, reset]);
   const goLogin = useCallback(() => reset('login', ['welcome']), [reset]);
   // Let the green "Verified" state show briefly before moving on (mock login, no real auth).
   const goHome = useCallback(() => {
@@ -90,7 +111,7 @@ export default function App() {
       <DeviceFrame>
       <ToastProvider>
         <StatusBar style="light" />
-        {route === 'splash' && <SplashScreen onFinish={goWelcome} />}
+        {route === 'splash' && <SplashScreen onFinish={onSplashFinish} />}
         {route === 'welcome' && <WelcomeScreen onGetStarted={goLogin} onLogin={goLogin} />}
         {route === 'login' && <LoginScreen onBack={goWelcome} onVerified={goHome} />}
         {route === 'home' && (

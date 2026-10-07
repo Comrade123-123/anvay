@@ -5,6 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
+import { api, ApiError } from '../api/client';
+import { useAuth } from '../state/AuthContext';
+import type { OtpKind, SignInResult } from '../api/types';
 import { OtpInput, OtpInputHandle } from '../components/OtpInput';
 
 // Screen 4 of ANVAY_ka_kaam.pdf (login). Layout is fluid (see theme/responsive) and the form
@@ -54,6 +57,10 @@ export function LoginScreen({ onBack, onVerified }: Props) {
   const [seconds, setSeconds] = useState(0);
   const [verifying, setVerifying] = useState(false);
   const [verified, setVerified] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [hint, setHint] = useState('');
+  const [otpError, setOtpError] = useState('');
+  const { signIn } = useAuth();
 
   const otpRef = useRef<OtpInputHandle>(null);
   const scrollRef = useRef<ScrollView>(null);
@@ -78,8 +85,26 @@ export function LoginScreen({ onBack, onVerified }: Props) {
     ? `+91 ${mobile.slice(0, 2)}XXX X${mobile.slice(6)}`
     : `XXXX XXXX ${aadhaar.slice(8)}`;
 
-  const sendOtp = () => {
-    if (!canSend) return;
+  const identifier = (): { kind: OtpKind; value: string } => ({ kind: isMobile ? 'mobile' : 'aadhaar', value: isMobile ? mobile : aadhaar });
+
+  const requestOtp = async (): Promise<boolean> => {
+    setSending(true);
+    setOtpError('');
+    try {
+      const res = await api.post<{ hint?: string }>('/auth/send-otp', identifier());
+      setHint(res.hint ?? '');
+      return true;
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not send the OTP. Please try again.');
+      return false;
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendOtp = async () => {
+    if (!canSend || sending) return;
+    if (!(await requestOtp())) return;
     setOtpSent(true);
     setCode('');
     setSeconds(RESEND_SECONDS);
@@ -89,8 +114,9 @@ export function LoginScreen({ onBack, onVerified }: Props) {
       scrollRef.current?.scrollTo({ y: r.s(200), animated: true });
     }, 100);
   };
-  const resend = () => {
-    if (seconds > 0) return;
+  const resend = async () => {
+    if (seconds > 0 || sending) return;
+    if (!(await requestOtp())) return;
     setCode('');
     setSeconds(RESEND_SECONDS);
     otpRef.current?.focus();
@@ -101,16 +127,25 @@ export function LoginScreen({ onBack, onVerified }: Props) {
     setVerified(false);
     setVerifying(false);
     setSeconds(0);
+    setOtpError('');
+    setHint('');
   };
-  const verify = () => {
+  const verify = async () => {
     if (code.length !== OTP_LENGTH || verifying || verified) return;
     setVerifying(true);
-    // Mock only: any 6 digits are accepted.
-    timer.current = setTimeout(() => {
+    setOtpError('');
+    try {
+      const result = await api.post<SignInResult>('/auth/verify-otp', { ...identifier(), code });
+      await signIn(result);
       setVerifying(false);
       setVerified(true);
       onVerified?.();
-    }, 800);
+    } catch (e) {
+      setVerifying(false);
+      setCode('');
+      setOtpError(e instanceof ApiError ? e.message : 'Could not verify the OTP. Please try again.');
+      otpRef.current?.focus();
+    }
   };
 
   const onChangeField = (t: string) => {
@@ -275,8 +310,10 @@ export function LoginScreen({ onBack, onVerified }: Props) {
                     Enter OTP sent to <Text style={styles.otpLabelStrong}>{masked}</Text>
                   </Text>
                   <View style={styles.otpRow}>
-                    <OtpInput ref={otpRef} value={code} onChange={setCode} length={OTP_LENGTH} />
+                    <OtpInput ref={otpRef} value={code} onChange={(v) => { setCode(v); if (otpError) setOtpError(''); }} length={OTP_LENGTH} />
                   </View>
+                  {!!otpError && <Text style={styles.errorText}>{otpError}</Text>}
+                  {!otpError && !!hint && <Text style={styles.hintText}>{hint}</Text>}
 
                   <View style={styles.resendRow}>
                     {seconds > 0 ? (
@@ -495,6 +532,7 @@ const makeStyles = (r: Responsive) => {
       ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as object) : null),
     },
     valid: { width: s(32), alignItems: 'center', justifyContent: 'center' },
+    hintText: { fontFamily: fontFamily.regular, fontSize: fs(12), lineHeight: fs(16), color: colors.textSecondary, marginTop: 6 },
     errorText: { fontFamily: fontFamily.regular, fontSize: fs(12), lineHeight: fs(16), color: colors.danger, marginTop: 6 },
 
     consent: { flexDirection: 'row', marginTop: s(14), gap: s(7) },

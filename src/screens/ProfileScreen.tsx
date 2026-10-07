@@ -5,6 +5,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import { useAuth } from '../state/AuthContext';
+import type { Student } from '../api/types';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 
 // Screen 6 of ANVAY_ka_kaam.pdf (My Profile). Static mock data only.
@@ -52,10 +56,24 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
   const [lang, setLang] = useState<'en' | 'hi'>('en');
   const [copied, setCopied] = useState(false);
 
+  const { data: me, error, reload } = useApi<Student>('/me');
+  const { signOut } = useAuth();
+
   const copyId = () => {
+    try {
+      // The browser may refuse (page not focused); the "copied" tick still shows, so a refusal is ignored.
+      Promise.resolve((globalThis as any).navigator?.clipboard?.writeText?.(me?.apaarId ?? '')).catch(() => {});
+    } catch {}
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  const logout = async () => {
+    await signOut();
+    onLogout?.();
+  };
+
+  if (!me) return <LoadState error={error} onRetry={reload} label="Loading your profile…" />;
 
   return (
     <View style={styles.root}>
@@ -118,17 +136,17 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
                 </View>
               </View>
               <View style={styles.identityCol}>
-                <Text style={styles.name}>Ramesh Kumar Munda</Text>
-                <Text style={styles.college}>IIT Bombay · Dept. of Computer Science & Engg</Text>
+                <Text style={styles.name}>{me.name}</Text>
+                <Text style={styles.college}>{[me.institute, me.course].filter(Boolean).join(' · ')}</Text>
                 <View style={styles.tribeChip}>
                   <Icon name="shape-outline" size={r.s(16)} color={ORANGE} />
-                  <Text style={styles.tribeText}>Santhal / Munda ST · Khunti, Jharkhand</Text>
+                  <Text style={styles.tribeText}>{`${me.category} · ${[me.district, me.state].filter(Boolean).join(', ')}`}</Text>
                 </View>
               </View>
             </View>
             <View style={styles.dobRow}>
               <Icon name="calendar-blank-outline" size={r.s(15)} color={colors.textSecondary} />
-              <Text style={styles.dobText}>DOB: 14/08/2003 · Validated: 12/01/2026</Text>
+              <Text style={styles.dobText}>{`DOB: ${me.dob}`}{me.ekycDone ? ' · e-KYC validated' : ''}</Text>
             </View>
 
             <View style={styles.rule} />
@@ -139,7 +157,7 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
               </View>
               <View style={styles.apaarCol}>
                 <Text style={styles.apaarLabel}>MOTA BENEFICIARY / APAAR ID</Text>
-                <Text style={styles.apaarId}>MOTA/PM/2026/JH/004512</Text>
+                <Text style={styles.apaarId}>{me.apaarId ?? '—'}</Text>
                 <View style={styles.dlChip}>
                   <Icon name="check-decagram" size={r.s(14)} color={GREEN} />
                   <Text style={styles.dlText}>DigiLocker</Text>
@@ -256,7 +274,7 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
           {/* Log out */}
           <Pressable
             accessibilityRole="button"
-            onPress={onLogout}
+            onPress={logout}
             style={({ pressed }) => [styles.logout, pressed && { opacity: 0.85 }]}
           >
             <Icon name="logout" size={r.s(20)} color={colors.danger} />

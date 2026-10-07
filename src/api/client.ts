@@ -5,8 +5,14 @@ import { Platform } from 'react-native';
 const BASE = Platform.OS === 'web' ? '' : (process.env.EXPO_PUBLIC_API_URL ?? '');
 
 let token: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
 export const setToken = (t: string | null) => {
   token = t;
+};
+// Called when the server says the session is no longer valid (expired or tampered token).
+export const setUnauthorizedHandler = (fn: (() => void) | null) => {
+  onUnauthorized = fn;
 };
 
 export class ApiError extends Error {
@@ -16,13 +22,19 @@ export class ApiError extends Error {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}/api${path}`, {
-    method,
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : null) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api${path}`, {
+      method,
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : null) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError('No connection. Check your internet and try again.', 0);
+  }
   const payload = await res.json().catch(() => null);
-  if (!res.ok || !payload?.ok) throw new ApiError(payload?.error ?? `Request failed (${res.status})`, res.status);
+  if (res.status === 401 && token && onUnauthorized) onUnauthorized();
+  if (!res.ok || !payload?.ok) throw new ApiError(payload?.error ?? `Something went wrong (${res.status})`, res.status);
   return payload.data as T;
 }
 

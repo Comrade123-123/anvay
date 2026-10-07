@@ -8,6 +8,9 @@ import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { OnboardingIllustration } from '../components/OnboardingIllustration';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import type { HomeData } from '../api/types';
 
 // Screen 5 of ANVAY_ka_kaam.pdf (home dashboard). Static mock data only.
 // Alignment fixes vs. the reference: real logo in the header, one shared 16pt gutter,
@@ -30,13 +33,6 @@ const quickActions: { icon: IconName; en: string; hi: string }[] = [
   { icon: 'folder-account', en: 'DigiLocker', hi: 'प्रमाण पत्र' },
   { icon: 'headset', en: 'Grievance', hi: 'शिकायत निवारण' },
 ];
-
-const steps = [
-  { key: 'submitted', label: 'Submitted', sub: '15/09/2026', state: 'done' },
-  { key: 'verified', label: 'Verified', sub: '28/09/2026', state: 'current' },
-  { key: 'sanctioned', label: 'Sanctioned', sub: 'Pending', state: 'todo' },
-  { key: 'disbursed', label: 'Disbursed', sub: 'PFMS', state: 'todo' },
-] as const;
 
 const schemes = [
   { id: 'pre', tag: 'Classes 9 & 10', status: 'Approved', tone: 'green', title: 'Pre-Matric ST Scholarship', desc: 'Annual stipend & book grant for hostellers & day scholars.', amount: '₹3,500' },
@@ -78,6 +74,11 @@ export function HomeScreen({
   const [lang, setLang] = useState<'en' | 'hi'>('en');
 
   const cardWidth = Math.min(r.contentWidth * 0.82, r.s(330));
+  const { data, error, reload } = useApi<HomeData>('/home');
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading your dashboard…" />;
+  const { student, application: app } = data;
+  const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
   return (
     <View style={styles.root}>
@@ -126,7 +127,7 @@ export function HomeScreen({
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Notifications" onPress={onOpenNotifications} style={styles.bell}>
                 <Icon name="bell-outline" size={r.s(18)} color="#FFFFFF" />
-                <View style={styles.bellDot} />
+                {data.unreadCount > 0 && <View style={styles.bellDot} />}
               </Pressable>
             </View>
           </View>
@@ -136,26 +137,29 @@ export function HomeScreen({
           {/* Profile strip */}
           <View style={styles.profile}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>RK</Text>
+              <Text style={styles.avatarText}>{student.initials}</Text>
             </View>
             <View style={styles.profileCol}>
               <View style={styles.nameRow}>
-                <Text style={styles.name} numberOfLines={2}>Ramesh Kumar Munda</Text>
+                <Text style={styles.name} numberOfLines={2}>{student.name}</Text>
                 <View style={styles.stChip}>
-                  <Text style={styles.stText}>ST</Text>
+                  <Text style={styles.stText}>{student.category}</Text>
                 </View>
               </View>
               <Text style={styles.apaar} numberOfLines={1}>
-                APAAR/ID: <Text style={styles.apaarId}>MOTA/PM/2026/JH/004512</Text>
+                APAAR/ID: <Text style={styles.apaarId}>{student.apaarId ?? '—'}</Text>
               </Text>
               <Text style={styles.place} numberOfLines={1}>
-                Khunti, Jharkhand / <Hi style={styles.place}>खूंटी, झारखंड</Hi>
+                {[student.district, student.state].filter(Boolean).join(', ')}
+                {student.districtHi && student.stateHi ? <> / <Hi style={styles.place}>{`${student.districtHi}, ${student.stateHi}`}</Hi></> : null}
               </Text>
             </View>
-            <View style={styles.kyc}>
-              <Icon name="check-decagram-outline" size={r.s(14)} color={GREEN} />
-              <Text style={styles.kycText}>e-KYC Done</Text>
-            </View>
+            {student.ekycDone && (
+              <View style={styles.kyc}>
+                <Icon name="check-decagram-outline" size={r.s(14)} color={GREEN} />
+                <Text style={styles.kycText}>e-KYC Done</Text>
+              </View>
+            )}
           </View>
 
           <View style={styles.content}>
@@ -210,6 +214,7 @@ export function HomeScreen({
             </View>
 
             {/* Active application */}
+            {app ? (
             <View style={styles.card}>
               <View style={styles.appHead}>
                 <View style={{ flex: 1 }}>
@@ -220,7 +225,7 @@ export function HomeScreen({
                 </View>
                 <View style={styles.statusPill}>
                   <View style={styles.statusDot} />
-                  <Text style={styles.statusText}>Disbursement in Progress</Text>
+                  <Text style={styles.statusText}>{app.statusLabel}</Text>
                 </View>
               </View>
               <View style={styles.rule} />
@@ -228,22 +233,22 @@ export function HomeScreen({
               <Text style={styles.appScheme}>Centrally Sponsored Scheme (Ministry of Tribal Affairs)</Text>
               <View style={styles.appTitleRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.appTitle}>Post-Matric Scholarship for ST Students</Text>
-                  <Hi style={styles.appTitleHi}>पोस्ट-मैट्रिक छात्रवृत्ति योजना</Hi>
+                  <Text style={styles.appTitle}>{app.title}</Text>
+                  {!!app.titleHi && <Hi style={styles.appTitleHi}>{app.titleHi}</Hi>}
                 </View>
                 <View style={styles.amountCol}>
-                  <Text style={styles.amount}>₹18,500</Text>
+                  <Text style={styles.amount}>{app.amount != null ? inr(app.amount) : '—'}</Text>
                   <Text style={styles.amountSub}>DBT Entitlement</Text>
                 </View>
               </View>
 
               {/* Stepper: 4 equal columns, connector lines sit between circle centres */}
               <View style={styles.stepper}>
-                {steps.map((st, i) => (
+                {app.steps.map((st, i, all) => (
                   <View key={st.key} style={styles.step}>
                     <View style={styles.stepTrack}>
-                      <View style={[styles.line, styles.lineL, i === 0 && styles.lineHidden, i <= 1 && styles.lineDone]} />
-                      <View style={[styles.line, styles.lineR, i === 3 && styles.lineHidden, i === 0 && styles.lineDone, i === 1 && styles.lineHalf]} />
+                      <View style={[styles.line, styles.lineL, i === 0 && styles.lineHidden, i > 0 && all[i - 1].state === 'done' && styles.lineDone]} />
+                      <View style={[styles.line, styles.lineR, i === all.length - 1 && styles.lineHidden, st.state === 'done' && styles.lineDone, st.state === 'current' && styles.lineHalf]} />
                       {st.state === 'done' && (
                         <View style={[styles.node, styles.nodeDone]}>
                           <Icon name="check" size={r.s(15)} color="#FFFFFF" />
@@ -283,10 +288,18 @@ export function HomeScreen({
                   <Icon name="arrow-right" size={r.s(15)} color={NAVY} />
                 </Pressable>
                 <View style={styles.aadhaarChip}>
-                  <Text style={styles.aadhaarChipText}>Aadhaar DBT •••• 4291</Text>
+                  <Text style={styles.aadhaarChipText}>Aadhaar DBT •••• {student.bank.last4 ?? '----'}</Text>
                 </View>
               </View>
             </View>
+            ) : (
+              <View style={styles.card}>
+                <Text style={styles.appLabel}>
+                  ACTIVE APPLICATION / <Hi style={styles.appLabel}>सक्रिय आवेदन</Hi>
+                </Text>
+                <Text style={styles.appPortal}>You have no active application yet. Start one from Apply Scheme.</Text>
+              </View>
+            )}
 
             {/* Action needed */}
             <View style={styles.alert}>
