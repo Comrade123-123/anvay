@@ -19,7 +19,7 @@ English) and works on phones, tablets and the web from one codebase.
 
 | Real | Simulated |
 | --- | --- |
-| Sign-in session (signed token), profile, schemes and the eligibility rules | OTP (the demo code is set in `DEMO_OTP`), any number signs in as the demo student |
+| Sign-in session (signed token), profile, schemes and the eligibility rules; SMS OTP when an SMS provider is configured (see below) | In demo mode the OTP is the fixed `DEMO_OTP`; a number with no student record signs in as the demo student |
 | Applications, stages, documents (files in private storage), payments, notifications | Document verification (a file name containing "blur" or "mismatch" is rejected) |
 | Grievances with tickets and ratings, calendar, JAGO chat (keyword rules over the student's own records) | DigiLocker refresh, NPCI Aadhaar seeding, PFMS payment retry |
 | Offline: saved screens, grievance outbox that uploads when back online | The "move to next stage" control on Journey (stands in for the officers); the SMS number |
@@ -61,6 +61,18 @@ Copy `.env.example` to `.env.local` and fill in the values below to run the API.
 Vercel builds with `npm run build:web` and serves `dist/`; `/api/*` is rewritten to the single function. Set these in
 the project settings (Production): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `JWT_SECRET`, `DEMO_OTP`. The service
 role key must stay on the server; the app never receives it.
+
+## Real SMS OTP (optional)
+
+Without the settings below the app stays in demo mode (fixed OTP, no SMS). To text a real OTP:
+
+1. Run `supabase/migrations/002_otp.sql` in the Supabase SQL editor.
+2. Create an MSG91 account, register the sender ID and an OTP template on DLT, and get the template id.
+3. Set `SMS_PROVIDER=msg91`, `MSG91_AUTH_KEY` and `MSG91_TEMPLATE_ID` in Vercel (Production) and redeploy.
+
+Rules: the OTP is 6 digits, valid 5 minutes, 5 wrong tries per code, 30 seconds between codes, 5 codes per hour per
+number. Only a keyed hash is stored. Aadhaar-number sign-in is refused in this mode (it needs UIDAI's own service).
+Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/otp.test.mts`.
 
 ## Demo notes
 

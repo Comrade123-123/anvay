@@ -5,6 +5,10 @@ export function readEnv() {
     serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
     jwtSecret: process.env.JWT_SECRET ?? '',
     demoOtp: process.env.DEMO_OTP ?? '123456',
+    // Real SMS OTP is on only when all three are set; otherwise the app stays in demo mode.
+    smsProvider: process.env.SMS_PROVIDER ?? '',
+    msg91AuthKey: process.env.MSG91_AUTH_KEY ?? '',
+    msg91TemplateId: process.env.MSG91_TEMPLATE_ID ?? '',
   };
 }
 
