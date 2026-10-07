@@ -166,7 +166,7 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onNotifications={() => go('notifications')}
           />
         )}
-        {route === 'chat' && <ChatScreen onBack={() => back()} onOpenDetails={() => go('journey')} onUpload={() => go('docs')} />}
+        {route === 'chat' && <ChatScreen onBack={() => back()} onOpenDetails={() => go('journey')} onUpload={() => go('wallet')} />}
         {route === 'calendar' && (
           <CalendarScreen
             onBack={() => back()}
