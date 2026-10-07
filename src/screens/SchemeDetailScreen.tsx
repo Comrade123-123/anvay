@@ -6,6 +6,9 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { SchemeHeroIllustration } from '../components/SchemeHeroIllustration';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import type { SchemeDetail } from '../api/types';
 
 // Screen 11 of ANVAY_ka_kaam.pdf (Scheme Details for Top Class Education, opened from the Schemes Directory).
 // Static mock data only. Sizes and icon sizes follow the PDF's drawing data on its 388pt frame: 36pt back
@@ -31,21 +34,22 @@ const breakdown: { icon: IconName; title: string; desc: string; foot: string; ch
   { icon: 'book-open-variant', title: 'Books & Supplies', desc: 'Annual study equipment allowance', foot: '₹5,000 / year' },
 ];
 
-const paperless: { icon: IconName; title: string; sub: string; chipIcon: IconName; chip: string }[] = [
-  { icon: 'badge-account-outline', title: 'ST Caste Certificate', sub: 'State Tribal Welfare Dept · Verified', chipIcon: 'check-decagram', chip: 'DigiLocker' },
-  { icon: 'script-text-outline', title: 'Income Certificate 2025‑26', sub: 'Annual Family Income: ₹3,40,000', chipIcon: 'check-decagram', chip: 'DigiLocker' },
-  { icon: 'school', title: 'Admission Confirmation', sub: 'IIT Bombay · Seat Allocation (JoSAA)', chipIcon: 'card-account-details', chip: 'APAAR ID' },
-  { icon: 'wallet-outline', title: 'Aadhaar Seeded Bank Account', sub: 'State Bank of India (***3492)', chipIcon: 'check-all', chip: 'NPCI Active' },
-];
 
-type Props = { onBack?: () => void; onApply?: () => void };
+type Props = { code: string; onBack?: () => void; onApply?: () => void };
 
-export function SchemeDetailScreen({ onBack, onApply }: Props) {
+export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
   const toast = useToast();
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [saved, setSaved] = useState(false);
+  const { data: d, error, reload } = useApi<SchemeDetail>(`/schemes/${encodeURIComponent(code)}`);
+
+  if (!d) return <LoadState error={error} onRetry={reload} label="Loading scheme…" />;
+  const eligible = d.status === 'eligible';
+  const enrolled = d.status === 'enrolled';
+  const pct = d.total ? Math.round((d.matched / d.total) * 100) : 0;
+  const fetched = d.documents.filter((x) => x.status === 'verified').length;
 
   return (
     <View style={styles.root}>
@@ -90,7 +94,7 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
               <Text style={styles.heroTagText}>CENTRALLY SPONSORED SCHEME</Text>
             </View>
             <View style={styles.codeTag}>
-              <Text style={styles.codeTagText}>ST-TOP-01</Text>
+              <Text style={styles.codeTagText}>{d.code}</Text>
             </View>
           </View>
 
@@ -112,12 +116,9 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
         <View style={styles.column}>
           {/* Title card */}
           <View style={styles.card}>
-            <Text style={styles.schemeTitle}>Top Class Education Scheme for ST Students</Text>
-            <Hi style={styles.schemeHi}>अनुसूचित जनजाति हेतु शीर्ष श्रेणी शिक्षा योजना</Hi>
-            <Text style={styles.schemeDesc}>
-              Full financial support for meritorious Scheduled Tribe students gaining admission to notified premier
-              institutes (IITs, IIMs, AIIMS, NITs, and NLUs).
-            </Text>
+            <Text style={styles.schemeTitle}>{d.title}</Text>
+            {!!d.titleHi && <Hi style={styles.schemeHi}>{d.titleHi}</Hi>}
+            <Text style={styles.schemeDesc}>{d.summary}</Text>
           </View>
 
           {/* Support + deadline: equal-height cards */}
@@ -133,9 +134,7 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
                 </View>
               </View>
               <View style={styles.infoRule} />
-              <Text style={styles.infoValue}>
-                ₹2.00 Lakh<Text style={styles.infoUnit}>/yr</Text>
-              </Text>
+              <Text style={styles.infoValue}>{d.amountText}</Text>
             </View>
             <View style={styles.infoCard}>
               <View style={styles.infoHead}>
@@ -148,7 +147,7 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
                 </View>
               </View>
               <View style={styles.infoRule} />
-              <Text style={styles.infoValue}>31/10/2026</Text>
+              <Text style={styles.infoValue}>{d.deadline || '—'}</Text>
             </View>
           </View>
 
@@ -160,9 +159,10 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.eligibleTitle}>
-                  You are Eligible / <Hi style={styles.eligibleTitle}>आप पात्र हैं</Hi>
+                  {enrolled ? 'You are Enrolled / ' : eligible ? 'You are Eligible / ' : 'Not eligible right now / '}
+                  <Hi style={styles.eligibleTitle}>{enrolled ? 'आप नामांकित हैं' : eligible ? 'आप पात्र हैं' : 'अभी पात्र नहीं'}</Hi>
                 </Text>
-                <Text style={styles.eligibleSub}>Automatic Pre-Screening Match (100%)</Text>
+                <Text style={styles.eligibleSub}>Automatic Pre-Screening Match ({pct}%)</Text>
               </View>
               <View style={styles.dlChip}>
                 <Icon name="shield-check" size={r.s(12)} color={GREEN} />
@@ -170,33 +170,27 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
               </View>
             </View>
             <View style={styles.eligibleRule} />
-            {[
-              <>
-                Admission confirmed at <Text style={styles.bold}>IIT Bombay</Text> (B.Tech Computer Science)
-              </>,
-              <>
-                Income within <Text style={styles.bold}>₹6.0 Lakh ceiling</Text> (Revenue Dept Verified)
-              </>,
-              <>
-                ST Certificate verified via <Text style={styles.bold}>State Tribal Registry</Text>
-              </>,
-            ].map((line, i) => (
-              <View key={i} style={styles.bulletRow}>
-                <Icon name="check-circle" size={r.s(15)} color={GREEN} />
-                <Text style={styles.bulletText}>{line}</Text>
+            {d.checks.map((c) => (
+              <View key={c.key} style={styles.bulletRow}>
+                <Icon name={c.ok ? 'check-circle' : 'close-circle'} size={r.s(15)} color={c.ok ? GREEN : '#C62828'} />
+                <Text style={styles.bulletText}>{c.label}</Text>
               </View>
             ))}
           </View>
 
           {/* Transition notice */}
-          <View style={styles.notice}>
-            <Icon name="swap-horizontal-circle-outline" size={r.s(18)} color={ORANGE} />
-            <Text style={styles.noticeText}>
-              Applying will transition your scholarship from <Text style={styles.noticeBold}>Post-Matric (ST)</Text>{' '}
-              seamlessly without any interruption in DBT disbursements.
-            </Text>
-          </View>
+          {eligible && (
+            <View style={styles.notice}>
+              <Icon name="swap-horizontal-circle-outline" size={r.s(18)} color={ORANGE} />
+              <Text style={styles.noticeText}>
+                If you already receive another scholarship, applying may replace it under the{' '}
+                <Text style={styles.noticeBold}>Single-Scholarship Norms</Text>. You will be asked to confirm before anything changes.
+              </Text>
+            </View>
+          )}
 
+          {d.code === 'TC-ST-HE' && (
+            <>
           {/* Entitlement breakdown */}
           <View style={styles.sectionHead}>
             <View style={{ flex: 1 }}>
@@ -228,6 +222,9 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
             ))}
           </View>
 
+            </>
+          )}
+
           {/* Paperless verification */}
           <View style={styles.sectionHead}>
             <View style={{ flex: 1 }}>
@@ -236,25 +233,30 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
             </View>
             <View style={styles.fetched}>
               <Icon name="check-circle-outline" size={r.s(13)} color={GREEN} />
-              <Text style={styles.fetchedText}>4/4 Auto-Fetched</Text>
+              <Text style={styles.fetchedText}>{fetched}/{d.documents.length} Auto-Fetched</Text>
             </View>
           </View>
           <View style={styles.paperCard}>
-            {paperless.map((p) => (
-              <View key={p.title} style={styles.paperRow}>
-                <View style={styles.paperTile}>
-                  <Icon name={p.icon} size={r.s(16)} color={NAVY} />
+            {d.documents.map((doc) => {
+              const ok = doc.status === 'verified';
+              return (
+                <View key={doc.name} style={styles.paperRow}>
+                  <View style={styles.paperTile}>
+                    <Icon name={ok ? 'file-check-outline' : 'file-alert-outline'} size={r.s(16)} color={ok ? NAVY : '#C62828'} />
+                  </View>
+                  <View style={styles.paperBody}>
+                    <Text style={styles.paperTitle}>{doc.name}</Text>
+                    <Text style={styles.paperSub}>
+                      {ok ? 'Verified in your DigiLocker wallet' : doc.status === 'rejected' ? 'Needs a fresh upload' : 'Not in your wallet yet'}
+                    </Text>
+                  </View>
+                  <View style={[styles.paperChip, !ok && { backgroundColor: '#FDECEC' }]}>
+                    <Icon name={ok ? 'check-decagram' : 'alert-circle-outline'} size={r.s(12)} color={ok ? GREEN : '#C62828'} />
+                    <Text style={[styles.paperChipText, !ok && { color: '#C62828' }]}>{ok ? 'DigiLocker' : 'Action needed'}</Text>
+                  </View>
                 </View>
-                <View style={styles.paperBody}>
-                  <Text style={styles.paperTitle}>{p.title}</Text>
-                  <Text style={styles.paperSub}>{p.sub}</Text>
-                </View>
-                <View style={styles.paperChip}>
-                  <Icon name={p.chipIcon} size={r.s(12)} color={GREEN} />
-                  <Text style={styles.paperChipText}>{p.chip}</Text>
-                </View>
-              </View>
-            ))}
+              );
+            })}
           </View>
 
           {/* Helpline */}
@@ -269,7 +271,7 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
           <View style={styles.footer}>
             <Text style={styles.footerMain}>Content owned by Ministry of Tribal Affairs, Government of India</Text>
             <Text style={styles.footerSub}>
-              Designed for Scheduled Tribe Meritorious Students (Top Class Education Scheme)
+              Designed for Scheduled Tribe students ({d.title})
             </Text>
           </View>
         </View>
@@ -280,12 +282,16 @@ export function SchemeDetailScreen({ onBack, onApply }: Props) {
         <View style={styles.applyInner}>
           <Pressable
             accessibilityRole="button"
+            accessibilityState={{ disabled: !eligible }}
+            disabled={!eligible}
             onPress={onApply}
-            style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.9 }]}
+            style={({ pressed }) => [styles.applyBtn, !eligible && { opacity: 0.55 }, pressed && eligible && { opacity: 0.9 }]}
           >
             <View style={styles.applyText}>
-              <Text style={styles.applyTitle}>Apply with Auto-Filled Details</Text>
-              <Hi style={styles.applyHi}>आवेदन प्रस्तुत करें</Hi>
+              <Text style={styles.applyTitle}>
+                {enrolled ? 'Already enrolled in this scheme' : eligible ? 'Apply with Auto-Filled Details' : 'You are not eligible for this scheme'}
+              </Text>
+              {eligible && <Hi style={styles.applyHi}>आवेदन प्रस्तुत करें</Hi>}
             </View>
             <Icon name="arrow-right" size={r.s(18)} color="#FFFFFF" style={styles.applyArrow} />
           </Pressable>

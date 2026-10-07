@@ -5,6 +5,9 @@ import Svg, { Circle, Ellipse, Line, Path, Polygon, Rect } from 'react-native-sv
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import type { SchemeCategory, SchemeItem, SchemesData } from '../api/types';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 
 // Screen 18 of ANVAY_ka_kaam.pdf (Scholarships hub, "For you" view; the Schemes tab lands here). Static mock data only.
@@ -26,20 +29,23 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const others: {
-  icon: IconName;
-  title: string;
-  hi: string;
-  desc: string;
-  status: 'Eligible' | 'Not eligible';
-  action: string;
-  note?: string;
-  noteTone?: 'red' | 'grey';
-}[] = [
-  { icon: 'airplane-takeoff', title: 'National Overseas Scholarship', hi: 'राष्ट्रीय प्रवासी छात्रवृत्ति', desc: 'Masters & PhD abroad', status: 'Eligible', action: 'Details' },
-  { icon: 'flask', title: 'National Fellowship (NFST)', hi: 'राष्ट्रीय अध्येतावृत्ति', desc: 'M.Phil & PhD in India', status: 'Not eligible', action: 'Criteria', note: 'Requires PG degree', noteTone: 'red' },
-  { icon: 'school', title: 'Pre-Matric Scholarship', hi: 'प्री-मैट्रिक छात्रवृत्ति', desc: 'Class 9–10 ST students', status: 'Not eligible', action: 'Completed', note: 'Age/class criteria passed', noteTone: 'grey' },
-];
+const categoryIcon: Record<SchemeCategory, IconName> = {
+  pre: 'school',
+  post: 'school-outline',
+  higher: 'bank',
+  fellowship: 'flask',
+  overseas: 'airplane-takeoff',
+};
+const categoryLabel: Record<SchemeCategory, string> = {
+  pre: 'Pre-Matric',
+  post: 'Post-Matric',
+  higher: 'Higher Education',
+  fellowship: 'Fellowship',
+  overseas: 'Overseas Study',
+};
+const shortName = (title: string) => title.replace(/^National /, '').split(/ (Scholarship|Education)/)[0];
+const stageText = (s: SchemeItem) =>
+  s.applicationStatus === 'credited' ? 'Credited' : s.applicationStatus === 'sanctioned' ? 'Sanctioned' : 'In review at Nodal Desk';
 
 // Small vector scene for the best-match card: graduate, building and tree (redrawn from a low-res raster).
 function BestMatchArt() {
@@ -72,8 +78,8 @@ function BestMatchArt() {
 type Props = {
   onTabSelect?: (key: TabKey) => void;
   onOpenDirectory?: () => void;
-  onDetails?: () => void;
-  onApply?: () => void;
+  onDetails?: (code: string) => void;
+  onApply?: (code: string) => void;
   onCurrent?: () => void;
   onOpenChat?: () => void;
 };
@@ -83,6 +89,13 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lang, setLang] = useState<'hi' | 'en'>('en');
+  const { data, error, reload } = useApi<SchemesData>('/schemes');
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading scholarships…" />;
+  const best = data.schemes.find((s) => s.status === 'eligible') ?? null;
+  const current = data.schemes.find((s) => s.status === 'enrolled') ?? null;
+  const others = data.schemes.filter((s) => s !== best && s !== current);
+  const pct = best && best.total ? Math.round((best.matched / best.total) * 100) : 0;
 
   return (
     <View style={styles.root}>
@@ -119,7 +132,7 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                 <Text style={styles.title}>
                   Scholarships / <Hi style={styles.titleHi}>छात्रवृत्तियाँ</Hi>
                 </Text>
-                <Text style={styles.subtitle}>5 schemes by Ministry of Tribal Affairs</Text>
+                <Text style={styles.subtitle}>{data.summary.total} schemes by Ministry of Tribal Affairs</Text>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Search schemes" onPress={onOpenDirectory} style={styles.searchBtn}>
                 <Icon name="magnify" size={r.s(20)} color="#FFFFFF" />
@@ -128,9 +141,9 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
 
             <View style={styles.stats}>
               {[
-                { n: '1', en: 'Active', hi: 'सक्रिय', dot: GREEN, ring: '#D1F9E4', color: INK },
-                { n: '2', en: 'Eligible', hi: 'योग्य', dot: NAVY, ring: '#DBE9FD', color: NAVY },
-                { n: '2', en: 'Ineligible', hi: 'अपात्र', dot: '#9CA3AF', ring: '#F0F4F9', color: MUTED },
+                { n: String(data.summary.active), en: 'Active', hi: 'सक्रिय', dot: GREEN, ring: '#D1F9E4', color: INK },
+                { n: String(data.summary.eligible), en: 'Eligible', hi: 'योग्य', dot: NAVY, ring: '#DBE9FD', color: NAVY },
+                { n: String(data.summary.ineligible), en: 'Ineligible', hi: 'अपात्र', dot: '#9CA3AF', ring: '#F0F4F9', color: MUTED },
               ].map((st, i) => (
                 <View key={st.en} style={[styles.stat, i > 0 && styles.statBorder]}>
                   <View style={[styles.statRing, { backgroundColor: st.ring }]}>
@@ -163,6 +176,8 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
             </Pressable>
           </View>
 
+          {best && (
+            <>
           {/* Recommended */}
           <View style={styles.sectionRow}>
             <View style={styles.sectionLeft}>
@@ -188,17 +203,17 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                     Best match · <Hi style={styles.bestPillText}>सर्वश्रेष्ठ</Hi>
                   </Text>
                 </View>
-                <Text style={styles.bestKind}>National Level Direct Disbursal</Text>
+                <Text style={styles.bestKind}>{categoryLabel[best.category]} Scholarship</Text>
                 <View style={styles.bestInst}>
                   <Icon name="bank" size={r.s(14)} color="#037756" />
-                  <Text style={styles.bestInstText}>Institute of National Importance (INI)</Text>
+                  <Text style={styles.bestInstText} numberOfLines={2}>{best.summary ?? ''}</Text>
                 </View>
               </View>
             </View>
 
             <View style={styles.bestBody}>
-              <Text style={styles.bestTitle}>Top Class Education Scholarship</Text>
-              <Hi style={styles.bestHi}>टॉप क्लास शिक्षा छात्रवृत्ति (ST विद्यार्थी)</Hi>
+              <Text style={styles.bestTitle}>{best.title}</Text>
+              {!!best.titleHi && <Hi style={styles.bestHi}>{best.titleHi}</Hi>}
 
               <View style={styles.tiles}>
                 <View style={styles.tile}>
@@ -206,21 +221,21 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                     <Icon name="currency-inr" size={r.s(14)} color={NAVY} />
                     <Text style={styles.tileLabel}>Amount</Text>
                   </View>
-                  <Text style={styles.tileValue}>Up to ₹2L/yr</Text>
+                  <Text style={styles.tileValue}>{best.amountText}</Text>
                 </View>
                 <View style={styles.tile}>
                   <View style={styles.tileHead}>
                     <Icon name="school" size={r.s(14)} color="#037756" />
-                    <Text style={styles.tileLabel}>Tuition</Text>
+                    <Text style={styles.tileLabel}>Type</Text>
                   </View>
-                  <Text style={styles.tileValue}>Full tuition</Text>
+                  <Text style={styles.tileValue}>{categoryLabel[best.category]}</Text>
                 </View>
                 <View style={[styles.tile, styles.tileAmber]}>
                   <View style={styles.tileHead}>
                     <Icon name="calendar-check" size={r.s(14)} color="#D87705" />
                     <Text style={[styles.tileLabel, { color: '#913F0E' }]}>Deadline</Text>
                   </View>
-                  <Text style={[styles.tileValue, { color: '#77340F' }]}>31/10/2026</Text>
+                  <Text style={[styles.tileValue, { color: '#77340F' }]}>{best.deadline || '—'}</Text>
                 </View>
               </View>
 
@@ -228,29 +243,29 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                 <View style={styles.matchTop}>
                   <View style={styles.matchLeft}>
                     <Icon name="check-circle" size={r.s(16)} color={GREEN} />
-                    <Text style={styles.matchTitle}>Eligibility match 4/4</Text>
+                    <Text style={styles.matchTitle}>Eligibility match {best.matched}/{best.total}</Text>
                   </View>
                   <View style={styles.qualified}>
-                    <Text style={styles.qualifiedText}>100% Qualified</Text>
+                    <Text style={styles.qualifiedText}>{pct}% Qualified</Text>
                   </View>
                 </View>
                 <View style={styles.bar}>
-                  <View style={styles.barFill} />
+                  <View style={[styles.barFill, { width: `${pct}%` }]} />
                 </View>
                 <View style={styles.matchFoot}>
-                  <Text style={styles.matchNote}>Income &lt; ₹8L · ST verified · IIT Kharagpur · 86.4% XII</Text>
+                  <Text style={styles.matchNote}>{best.checks.map((c) => c.label).join(' · ')}</Text>
                   <Text style={styles.autoFilled}>Auto-filled</Text>
                 </View>
               </View>
 
               <View style={styles.bestActions}>
-                <Pressable accessibilityRole="button" onPress={onDetails} hitSlop={6} style={styles.viewDetails}>
+                <Pressable accessibilityRole="button" onPress={() => onDetails?.(best.code)} hitSlop={6} style={styles.viewDetails}>
                   <Text style={styles.viewDetailsText}>
                     View details / <Hi style={styles.viewDetailsHi}>विवरण</Hi>
                   </Text>
                   <Icon name="chevron-right" size={r.s(16)} color={NAVY} />
                 </Pressable>
-                <Pressable accessibilityRole="button" onPress={onApply} style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.9 }]}>
+                <Pressable accessibilityRole="button" onPress={() => onApply?.(best.code)} style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.9 }]}>
                   <Text style={styles.applyText}>
                     Apply now / <Hi style={styles.applyText}>आवेदन करें</Hi>
                   </Text>
@@ -260,6 +275,11 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
             </View>
           </View>
 
+            </>
+          )}
+
+          {current && (
+            <>
           {/* Current scholarship */}
           <View style={styles.sectionRow}>
             <View style={styles.sectionLeft}>
@@ -276,15 +296,18 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <View style={styles.currentTitleRow}>
-                <Text style={styles.currentTitle}>Post-Matric Scholarship</Text>
+                <Text style={styles.currentTitle}>{current.title}</Text>
                 <View style={styles.activeChip}>
                   <Text style={styles.activeChipText}>Active</Text>
                 </View>
               </View>
-              <Text style={styles.currentSub}>₹18,500 · AY 2026-27 · In review at Nodal Desk</Text>
+              <Text style={styles.currentSub}>{current.amountText} · AY 2026-27 · {stageText(current)}</Text>
             </View>
             <Icon name="chevron-right" size={r.s(20)} color="#6B7686" />
           </Pressable>
+
+            </>
+          )}
 
           {/* Other schemes */}
           <View style={[styles.sectionRow, { marginTop: r.s(20) }]}>
@@ -298,33 +321,29 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
           </View>
           <View style={styles.grid}>
             {others.map((o) => {
-              const eligible = o.status === 'Eligible';
+              const eligible = o.status === 'eligible';
               return (
-                <View key={o.title} style={styles.gridCard}>
+                <View key={o.code} style={styles.gridCard}>
                   <View style={styles.gridTile}>
-                    <Icon name={o.icon} size={r.s(20)} color={NAVY} />
+                    <Icon name={categoryIcon[o.category]} size={r.s(20)} color={NAVY} />
                   </View>
                   <Text style={styles.gridTitle}>{o.title}</Text>
-                  <Hi style={styles.gridHi}>{o.hi}</Hi>
-                  <Text style={styles.gridDesc}>{o.desc}</Text>
+                  {!!o.titleHi && <Hi style={styles.gridHi}>{o.titleHi}</Hi>}
+                  <Text style={styles.gridDesc}>{o.summary}</Text>
                   <View style={{ flex: 1 }} />
                   <View style={styles.gridRule} />
                   <View style={styles.gridFoot}>
                     <View style={[styles.statusChip, !eligible && { backgroundColor: '#F0F4F9' }]}>
                       <View style={[styles.statusDot, { backgroundColor: eligible ? NAVY : '#9CA3AF' }]} />
-                      <Text style={[styles.statusText, !eligible && { color: MUTED }]}>{o.status}</Text>
+                      <Text style={[styles.statusText, !eligible && { color: MUTED }]}>{eligible ? 'Eligible' : 'Not eligible'}</Text>
                     </View>
-                    {eligible ? (
-                      <Pressable accessibilityRole="button" hitSlop={6} onPress={onDetails} style={styles.detailsLink}>
-                        <Text style={styles.detailsLinkText}>{o.action}</Text>
-                        <Icon name="arrow-right" size={r.s(14)} color={NAVY} />
-                      </Pressable>
-                    ) : (
-                      <Text style={styles.actionMuted}>{o.action}</Text>
-                    )}
+                    <Pressable accessibilityRole="button" hitSlop={6} onPress={() => onDetails?.(o.code)} style={styles.detailsLink}>
+                      <Text style={styles.detailsLinkText}>{eligible ? 'Details' : 'Criteria'}</Text>
+                      <Icon name="arrow-right" size={r.s(14)} color={NAVY} />
+                    </Pressable>
                   </View>
-                  {o.note ? (
-                    <Text style={[styles.gridNote, { color: o.noteTone === 'red' ? '#DB2626' : MUTED }]}>{o.note}</Text>
+                  {!eligible && o.reason ? (
+                    <Text style={[styles.gridNote, { color: '#DB2626' }]}>{o.reason}</Text>
                   ) : (
                     // reserves the note line so footers line up across the row
                     <View style={styles.gridNoteSlot} />
@@ -356,8 +375,10 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                 Single Scheme Norm: Only one scholarship can be availed at a time. Compare entitlements before switching.
               </Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={onApply} style={styles.normLink}>
-              <Text style={styles.normLinkText}>Compare Top Class vs Post-Matric</Text>
+            <Pressable accessibilityRole="button" onPress={() => best && onApply?.(best.code)} style={styles.normLink}>
+              <Text style={styles.normLinkText}>
+                {best && current ? `Compare ${shortName(best.title)} vs ${shortName(current.title)}` : 'Compare schemes'}
+              </Text>
               <Icon name="open-in-new" size={r.s(14)} color={NAVY} />
             </Pressable>
           </View>

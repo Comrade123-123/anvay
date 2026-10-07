@@ -4,7 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
-import { useToast } from '../components/Toast';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import type { SchemesData } from '../api/types';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 
 // Screen 10 of ANVAY_ka_kaam.pdf (Schemes Directory). Static mock data only.
@@ -29,7 +31,7 @@ type Scheme = {
   cat: Category;
   icon: IconName;
   amount: string;
-  status: 'Enrolled' | 'Eligible' | 'Active';
+  status: 'Enrolled' | 'Eligible' | 'Not eligible';
   statusHi: string;
   title: string;
   hi: string;
@@ -37,13 +39,18 @@ type Scheme = {
   amountChipWide?: boolean;
 };
 
-const schemes: Scheme[] = [
-  { code: 'PMS-ST-2026', cat: 'post', icon: 'school-outline', amount: '₹18,500/yr', status: 'Enrolled', statusHi: 'नामांकित', title: 'Post-Matric Scholarship for ST', hi: 'पोस्ट-मैट्रिक छात्रवृत्ति योजना', desc: 'Class 11 to PhD · Family income up to ₹2,50,000' },
-  { code: 'PRE-ST-0910', cat: 'pre', icon: 'book-open-variant', amount: '₹3,500/yr', status: 'Eligible', statusHi: 'पात्र', title: 'Pre-Matric Scholarship for ST', hi: 'प्री-मैट्रिक छात्रवृत्ति योजना', desc: 'Class 9 & 10 in Govt schools · Family income up to ₹2.5 Lakh' },
-  { code: 'TC-ST-HE', cat: 'higher', icon: 'bank', amount: '₹1,25,000/yr', status: 'Eligible', statusHi: 'पात्र', title: 'National Top Class Education', hi: 'राष्ट्रीय शीर्ष श्रेणी शिक्षा छात्रवृत्ति', desc: 'Top 250 institutes (IIT, IIM, AIIMS) · Full Tuition + Living' },
-  { code: 'NFST-PHD', cat: 'fellowship', icon: 'microscope', amount: '₹38,000/mo', status: 'Eligible', statusHi: 'पात्र', title: 'National Fellowship (NFST)', hi: 'राष्ट्रीय जनजातीय अध्येतावृत्ति योजना', desc: 'M.Phil & Ph.D Scholars · NET qualified or direct selection' },
-  { code: 'NOS-ST-INTL', cat: 'overseas', icon: 'airplane-takeoff', amount: '100% Tuition + Living', status: 'Active', statusHi: 'सक्रिय', title: 'National Overseas Scholarship', hi: 'राष्ट्रीय प्रवासी छात्रवृत्ति योजना', desc: 'Masters & Ph.D abroad in top 500 QS universities · 100% Funded' },
-];
+const categoryIcon: Record<Category, IconName> = {
+  pre: 'book-open-variant',
+  post: 'school-outline',
+  higher: 'bank',
+  fellowship: 'microscope',
+  overseas: 'airplane-takeoff',
+};
+const statusLabel = {
+  enrolled: { status: 'Enrolled', hi: 'नामांकित' },
+  eligible: { status: 'Eligible', hi: 'पात्र' },
+  not_eligible: { status: 'Not eligible', hi: 'अपात्र' },
+} as const;
 
 const chips: { key: 'all' | Category; label: string }[] = [
   { key: 'all', label: 'All Schemes' },
@@ -56,11 +63,8 @@ const chips: { key: 'all' | Category; label: string }[] = [
 
 type Props = { onBack?: () => void; onTabSelect?: (key: TabKey) => void; onOpenScheme?: (code: string) => void; onOpenChat?: () => void; onOpenHelp?: () => void };
 
-// Only Top Class Education has a details page in the design, so only its card opens one.
-const HAS_DETAILS = ['TC-ST-HE'];
 
 export function SchemesScreen({ onBack, onTabSelect, onOpenScheme, onOpenChat, onOpenHelp }: Props) {
-  const toast = useToast();
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -69,6 +73,23 @@ export function SchemesScreen({ onBack, onTabSelect, onOpenScheme, onOpenChat, o
   const [cat, setCat] = useState<'all' | Category>('all');
   const [searchFocused, setSearchFocused] = useState(false);
 
+  const { data, error, reload } = useApi<SchemesData>('/schemes');
+  const schemes: Scheme[] = useMemo(
+    () =>
+      (data?.schemes ?? []).map((s) => ({
+        code: s.code,
+        cat: s.category,
+        icon: categoryIcon[s.category],
+        amount: s.amountText,
+        status: statusLabel[s.status].status,
+        statusHi: statusLabel[s.status].hi,
+        title: s.title,
+        hi: s.titleHi ?? '',
+        desc: s.status === 'not_eligible' && s.reason ? s.reason : (s.summary ?? ''),
+      })),
+    [data],
+  );
+
   const list = useMemo(() => {
     const q = query.trim().toLowerCase();
     return schemes.filter(
@@ -76,7 +97,9 @@ export function SchemesScreen({ onBack, onTabSelect, onOpenScheme, onOpenChat, o
         (cat === 'all' || sc.cat === cat) &&
         (!q || [sc.code, sc.title, sc.desc, sc.hi].some((t) => t.toLowerCase().includes(q))),
     );
-  }, [query, cat]);
+  }, [schemes, query, cat]);
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading schemes…" />;
 
   return (
     <View style={styles.root}>
@@ -216,12 +239,12 @@ export function SchemesScreen({ onBack, onTabSelect, onOpenScheme, onOpenChat, o
           )}
 
           {list.map((sc) => {
-            const statusColor = sc.status === 'Eligible' ? NAVY : colors.indiaGreen;
+            const statusColor = sc.status === 'Eligible' ? NAVY : sc.status === 'Not eligible' ? '#6B7280' : colors.indiaGreen;
             return (
               <Pressable
                 key={sc.code}
                 accessibilityRole="button"
-                onPress={HAS_DETAILS.includes(sc.code) ? () => onOpenScheme?.(sc.code) : () => toast('Scheme details are not available in this demo')}
+                onPress={() => onOpenScheme?.(sc.code)}
                 style={({ pressed }) => [styles.card, pressed && { opacity: 0.92 }]}
               >
                 <View style={styles.tile}>

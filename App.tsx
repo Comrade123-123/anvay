@@ -50,6 +50,12 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
   // whichever screen actually opened the current one; `reset` is used for top-level jumps (tabs, login, home).
   const [route, setRoute] = useState<Route>('splash');
   const [stack, setStack] = useState<Route[]>([]);
+  // The scheme the student is looking at / applying for; Details, Switch and the Apply steps all read it.
+  const [schemeCode, setSchemeCode] = useState('TC-ST-HE');
+  const openScheme = (code: string, to: Route) => {
+    setSchemeCode(code);
+    go(to);
+  };
 
   const go = (to: Route) => {
     setStack((s) => [...s, route]);
@@ -142,7 +148,7 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onBack={() => back()}
             onTabSelect={onTabSelect}
             onDoItNow={() => go('wallet')}
-            onApply={() => go('scheme')}
+            onApply={() => openScheme('TC-ST-HE', 'scheme')}
           />
         )}
         {route === 'notifications' && (
@@ -155,12 +161,12 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
           <SchemesScreen
             onBack={() => back()}
             onTabSelect={onTabSelect}
-            onOpenScheme={() => go('scheme')}
+            onOpenScheme={(code) => openScheme(code, 'scheme')}
             onOpenChat={() => go('chat')}
             onOpenHelp={() => go('help')}
           />
         )}
-        {route === 'scheme' && <SchemeDetailScreen onBack={() => back('schemes')} onApply={() => go('switch')} />}
+        {route === 'scheme' && <SchemeDetailScreen code={schemeCode} onBack={() => back('schemes')} onApply={() => go('switch')} />}
         {route === 'switch' && (
           <SwitchScholarshipScreen onBack={() => back('scheme')} onKeep={() => back('scheme')} onSwitch={() => {
               resetDocsProgress();
@@ -199,8 +205,8 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onOpenChat={() => go('chat')}
             onTabSelect={onTabSelect}
             onOpenDirectory={() => go('schemes')}
-            onDetails={() => go('scheme')}
-            onApply={() => go('switch')}
+            onDetails={(code) => openScheme(code, 'scheme')}
+            onApply={(code) => openScheme(code, 'switch')}
             onCurrent={() => go('journey')}
           />
         )}

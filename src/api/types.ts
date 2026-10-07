@@ -40,3 +40,37 @@ export type HomeData = {
 
 export type OtpKind = 'mobile' | 'aadhaar';
 export type SignInResult = { token: string; student: Student };
+
+export type SchemeCheck = { key: string; label: string; ok: boolean };
+export type SchemeStatus = 'enrolled' | 'eligible' | 'not_eligible';
+export type SchemeCategory = 'pre' | 'post' | 'higher' | 'fellowship' | 'overseas';
+
+export type SchemeItem = {
+  code: string;
+  title: string;
+  titleHi: string | null;
+  category: SchemeCategory;
+  amountText: string;
+  amountValue: number | null;
+  summary: string | null;
+  deadline: string;
+  daysLeft: number | null;
+  status: SchemeStatus;
+  reason: string | null;
+  matched: number;
+  total: number;
+  checks: SchemeCheck[];
+  applicationId: string | null;
+  applicationStatus: string | null;
+};
+
+export type SchemesData = {
+  summary: { total: number; active: number; eligible: number; ineligible: number };
+  schemes: SchemeItem[];
+};
+
+export type SchemeDetail = SchemeItem & {
+  documents: { name: string; status: string }[];
+  bank: { name: string | null; last4: string | null; seeded: boolean };
+  application: { id: string; status: string; currentStage: number } | null;
+};
