@@ -13,6 +13,13 @@ import * as documents from './routes/documents';
 import * as documentsUpload from './routes/documents-upload';
 import * as documentsFromWallet from './routes/documents-from-wallet';
 import * as demoReset from './routes/demo-reset';
+import * as demoAdvance from './routes/demo-advance';
+import * as journey from './routes/journey';
+import * as dbt from './routes/dbt';
+import * as dbtFixSeeding from './routes/dbt-fix-seeding';
+import * as paymentRetry from './routes/payment-retry';
+import * as notifications from './routes/notifications';
+import * as notificationsRead from './routes/notifications-read';
 
 type Handler = (request: Request) => Response | Promise<Response>;
 type Module = Partial<Record<'GET' | 'POST' | 'PATCH' | 'DELETE', Handler>>;
@@ -34,6 +41,14 @@ const routes: { pattern: string; module: Module }[] = [
   { pattern: 'documents/upload', module: documentsUpload },
   { pattern: 'documents/from-wallet', module: documentsFromWallet },
   { pattern: 'demo/reset', module: demoReset },
+  { pattern: 'demo/advance', module: demoAdvance },
+  { pattern: 'journey', module: journey },
+  { pattern: 'dbt', module: dbt },
+  { pattern: 'dbt/fix-seeding', module: dbtFixSeeding },
+  { pattern: 'payments/:id/retry', module: paymentRetry },
+  { pattern: 'notifications', module: notifications },
+  { pattern: 'notifications/read-all', module: notificationsRead },
+  { pattern: 'notifications/:id/read', module: notificationsRead },
 ];
 
 function matches(pattern: string, segments: string[]): boolean {

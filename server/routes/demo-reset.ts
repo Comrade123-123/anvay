@@ -30,6 +30,41 @@ export async function POST(request: Request) {
     await db().from('notifications').delete().eq('student_id', id).in('title', ['Application submitted', 'Scholarship switched']);
     await db().from('deadlines').delete().eq('student_id', id).eq('title', 'Institute nodal officer verification');
 
+    // the seeded application goes back to "District Review in progress"
+    const SEED_STAGES = [
+      { no: 1, state: 'done', at: '2026-09-15T10:00:00+05:30', detail: 'Online Portal / DigiLocker e-Sign · 15/09/2026', desk: null, eta: null },
+      { no: 2, state: 'done', at: '2026-09-16T09:30:00+05:30', detail: 'State Scholarship Portal · 16/09/2026', desk: null, eta: null },
+      { no: 3, state: 'done', at: '2026-09-18T12:15:00+05:30', detail: 'Institute Nodal Officer · 18/09/2026', desk: null, eta: null },
+      { no: 4, state: 'current', at: null, detail: 'District Welfare Officer, Ranchi · 22/09/2026', desk: 'Desk 04 (Shri V. Markam)', eta: 'ETA ~3 Days' },
+      { no: 5, state: 'upcoming', at: null, detail: 'State Tribal Welfare Commissioner, Ranchi · Expected 05/10/2026', desk: null, eta: null },
+      { no: 6, state: 'upcoming', at: null, detail: 'PFMS Treasury Nodal Officer · Expected 18/10/2026', desk: null, eta: null },
+    ];
+    for (const s of SEED_STAGES) {
+      const r = await db()
+        .from('application_stages')
+        .update({ state: s.state, occurred_at: s.at, detail: s.detail, desk: s.desk, eta: s.eta })
+        .eq('application_id', SEEDED_APPLICATION_ID)
+        .eq('stage_no', s.no);
+      if (r.error) throw r.error;
+    }
+    const back = await db().from('applications').update({ status: 'in_review', current_stage: 4 }).eq('id', SEEDED_APPLICATION_ID);
+    if (back.error) throw back.error;
+
+    // payments: remove ones the demo created, restore the seeded two
+    await db().from('payments').delete().eq('student_id', id).like('label', '%(AY 2026-27)');
+    await db().from('payments').update({ status: 'processing', reference: null, paid_on: '2026-01-12' }).eq('student_id', id).eq('label', 'Maintenance Allowance (Installment 2)');
+    await db()
+      .from('payments')
+      .update({ status: 'failed', paid_on: '2025-12-02', failure_reason: 'Secondary bank account is not mapped with the NPCI DBT mapper', failure_ref: 'NPCI-ERR-4091' })
+      .eq('student_id', id)
+      .eq('label', 'Book Grant (Installment 1)');
+    await db().from('students').update({ aadhaar_seeded: true, npci_mapped: true }).eq('id', id);
+
+    // notifications: drop everything created after the seed and restore read / unread
+    await db().from('notifications').delete().eq('student_id', id).gt('created_at', '2026-09-30T00:00:00+05:30');
+    await db().from('notifications').update({ unread: true }).eq('student_id', id).in('title', ['₹9,250 credited', 'Institute verified your application', 'Top Class application closes in 32 days']);
+    await db().from('notifications').update({ unread: false }).eq('student_id', id).in('title', ['Admission letter needs re-upload', 'JAGO replied to your question']);
+
     return json({ reset: true });
   } catch {
     return fail('Could not reset the demo data', 500);
