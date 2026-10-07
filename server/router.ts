@@ -20,12 +20,17 @@ import * as dbtFixSeeding from './routes/dbt-fix-seeding';
 import * as paymentRetry from './routes/payment-retry';
 import * as notifications from './routes/notifications';
 import * as notificationsRead from './routes/notifications-read';
+import * as calendar from './routes/calendar';
+import * as grievances from './routes/grievances';
+import * as grievanceRate from './routes/grievance-rate';
+import * as chat from './routes/chat';
+import * as documentsSync from './routes/documents-sync';
 
 type Handler = (request: Request) => Response | Promise<Response>;
 type Module = Partial<Record<'GET' | 'POST' | 'PATCH' | 'DELETE', Handler>>;
 
 // Vercel's free plan allows 12 serverless functions per deployment, and every file in api/ becomes one. So the whole
-// API is a single function (api/[...route].ts) that picks the right handler here. ":name" matches any one segment.
+// API is a single function (api/router.ts) that picks the right handler here. ":name" matches any one segment.
 const routes: { pattern: string; module: Module }[] = [
   { pattern: 'health', module: health },
   { pattern: 'me', module: me },
@@ -49,6 +54,11 @@ const routes: { pattern: string; module: Module }[] = [
   { pattern: 'notifications', module: notifications },
   { pattern: 'notifications/read-all', module: notificationsRead },
   { pattern: 'notifications/:id/read', module: notificationsRead },
+  { pattern: 'calendar', module: calendar },
+  { pattern: 'grievances', module: grievances },
+  { pattern: 'grievances/:id/rate', module: grievanceRate },
+  { pattern: 'chat', module: chat },
+  { pattern: 'documents/sync', module: documentsSync },
 ];
 
 function matches(pattern: string, segments: string[]): boolean {

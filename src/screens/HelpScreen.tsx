@@ -5,8 +5,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import { pickFile, type PickedFile } from '../api/pickFile';
+import type { GrievancesData } from '../api/types';
 
-// Screen 21 of ANVAY_ka_kaam.pdf (Help & Grievance). Static mock data only: submitting adds a row to the local list.
+// Screen 21 of ANVAY_ka_kaam.pdf (Help & Grievance). Tickets are read from and saved through /api/grievances.
 // Sizes follow the PDF's drawing data on its 390pt frame: 36pt header buttons, 40pt quick-action icon discs,
 // 44pt inputs, 46pt submit button, 85pt text area, 32pt attach icon, 15pt rating stars.
 // The PDF left the quick-action cards and the form card at slightly different widths (gutters 16 vs 15); here every
@@ -24,23 +29,6 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const categories = ['Payment not received', 'Document verification', 'Name / details mismatch', 'Application status', 'Other'];
-const applications = ['Post-Matric 2026-27 · MOTA/PM/2026/JH/004512'];
-
-type Grv = {
-  id: string;
-  status: 'progress' | 'resolved';
-  title: string;
-  sub: string;
-  progress?: number;
-  due?: string;
-};
-
-const initialGrievances: Grv[] = [
-  { id: 'GRV/2026/00412', status: 'progress', title: 'Instalment 1 not credited', sub: 'Assigned to District Welfare Officer, Ranchi · 29/09/2026', progress: 0.6, due: 'Resolve by 06/10/2026 · 7 days left' },
-  { id: 'GRV/2026/00288', status: 'resolved', title: 'Name mismatch in certificate', sub: 'Resolved in 4 days · 18/09/2026' },
-];
-
 type Props = {
   onBack?: () => void;
   onTabSelect?: (key: TabKey) => void;
@@ -53,15 +41,16 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
   const styles = useMemo(() => makeStyles(r), [r.width]);
   const insets = useSafeAreaInsets();
 
-  const [category, setCategory] = useState(categories[0]);
+  const { data, error: loadError, reload } = useApi<GrievancesData>('/grievances');
+  const [category, setCategory] = useState('');
   const [openCat, setOpenCat] = useState(false);
   const [openApp, setOpenApp] = useState(false);
-  const [application, setApplication] = useState(applications[0]);
+  const [applicationId, setApplicationId] = useState<string | null>(null);
   const [desc, setDesc] = useState('');
-  const [attached, setAttached] = useState(false);
+  const [file, setFile] = useState<PickedFile | null>(null);
   const [error, setError] = useState('');
-  const [list, setList] = useState<Grv[]>(initialGrievances);
-  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [sending, setSending] = useState(false);
+  const [rated, setRated] = useState<Record<string, number>>({});
   const [expanded, setExpanded] = useState<string | null>(null);
   const [toast, setToast] = useState('');
   const [faq, setFaq] = useState(false);
@@ -71,20 +60,59 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
     setTimeout(() => setToast(''), 2600);
   };
 
-  const submit = () => {
+  if (!data) return <LoadState error={loadError} onRetry={reload} label="Loading your grievances…" />;
+  const categories = data.categories;
+  const applications = data.applications;
+  const chosenCategory = category || categories[0];
+  const chosenApp = applications.find((a) => a.id === applicationId) ?? applications[0] ?? null;
+
+  const attach = async () => {
+    if (file) return setFile(null);
+    try {
+      const picked = await pickFile();
+      if (picked) setFile(picked);
+    } catch (e) {
+      flash(e instanceof Error ? e.message : 'Could not attach that file.');
+    }
+  };
+
+  const submit = async () => {
+    if (sending) return;
     if (desc.trim().length < 5) {
       setError('Please describe your issue (at least a few words).');
       return;
     }
     setError('');
-    const n = 413 + list.length - 2;
-    setList((p) => [
-      { id: `GRV/2026/00${n}`, status: 'progress', title: category, sub: `Submitted just now · ${application.split(' · ')[0]}`, progress: 0.1, due: 'Resolve by 13/10/2026 · 14 days left' },
-      ...p,
-    ]);
-    setDesc('');
-    setAttached(false);
-    flash('Grievance submitted. You will get an SMS update.');
+    setSending(true);
+    try {
+      const made = await api.post<{ ticketNo: string }>('/grievances', {
+        category: chosenCategory,
+        description: desc.trim(),
+        applicationId: chosenApp?.id,
+        attachment: file ? { fileName: file.name, contentType: file.type, dataBase64: file.base64 } : undefined,
+      });
+      setDesc('');
+      setFile(null);
+      await reload();
+      flash(`Grievance ${made.ticketNo} submitted. You will get an SMS update.`);
+    } catch (e) {
+      setError(e instanceof ApiError || e instanceof Error ? e.message : 'Could not submit. Please try again.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const rate = async (ticketId: string, stars: number) => {
+    setRated((p) => ({ ...p, [ticketId]: stars }));
+    try {
+      await api.post(`/grievances/${ticketId}/rate`, { rating: stars });
+    } catch {
+      setRated((p) => {
+        const { [ticketId]: _drop, ...rest } = p;
+        return rest;
+      });
+      flash('Could not save your rating. Please try again.');
+    }
   };
 
   const quick = [
@@ -150,10 +178,10 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
           {faq && (
             <View style={[styles.card, { marginTop: r.s(12), gap: r.s(8) }]}>
               {['When will my instalment be credited?', 'How do I re-upload a rejected document?', 'How do I link Aadhaar with my bank?'].map((q) => (
-                <View key={q} style={styles.faqRow}>
+                <Pressable key={q} accessibilityRole="button" onPress={() => onAskJago?.()} style={styles.faqRow}>
                   <Icon name="chevron-right" size={r.s(16)} color={NAVY} />
                   <Text style={styles.faqText}>{q}</Text>
-                </View>
+                </Pressable>
               ))}
             </View>
           )}
@@ -172,13 +200,13 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
               Category <Hi style={styles.labelHi}>/ श्रेणी</Hi>
             </Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Category" onPress={() => { setOpenCat((v) => !v); setOpenApp(false); }} style={styles.select}>
-              <Text style={styles.selectText} numberOfLines={1}>{category}</Text>
+              <Text style={styles.selectText} numberOfLines={1}>{chosenCategory}</Text>
               <Icon name={openCat ? 'chevron-up' : 'chevron-down'} size={r.s(20)} color="#6B7280" />
             </Pressable>
             {openCat && (
               <View style={styles.menu}>
                 {categories.map((c) => (
-                  <Pressable key={c} accessibilityRole="button" onPress={() => { setCategory(c); setOpenCat(false); }} style={[styles.menuItem, c === category && { backgroundColor: '#E8EDF6' }]}>
+                  <Pressable key={c} accessibilityRole="button" onPress={() => { setCategory(c); setOpenCat(false); }} style={[styles.menuItem, c === chosenCategory && { backgroundColor: '#E8EDF6' }]}>
                     <Text style={styles.selectText}>{c}</Text>
                   </Pressable>
                 ))}
@@ -189,14 +217,14 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
               Application <Hi style={styles.labelHi}>/ छात्रवृत्ति आवेदन</Hi>
             </Text>
             <Pressable accessibilityRole="button" accessibilityLabel="Application" onPress={() => { setOpenApp((v) => !v); setOpenCat(false); }} style={styles.select}>
-              <Text style={styles.selectText} numberOfLines={1}>{application}</Text>
+              <Text style={styles.selectText} numberOfLines={1}>{chosenApp?.label ?? 'No active application'}</Text>
               <Icon name={openApp ? 'chevron-up' : 'chevron-down'} size={r.s(20)} color="#6B7280" />
             </Pressable>
             {openApp && (
               <View style={styles.menu}>
                 {applications.map((c) => (
-                  <Pressable key={c} accessibilityRole="button" onPress={() => { setApplication(c); setOpenApp(false); }} style={[styles.menuItem, { backgroundColor: '#E8EDF6' }]}>
-                    <Text style={styles.selectText}>{c}</Text>
+                  <Pressable key={c.id} accessibilityRole="button" onPress={() => { setApplicationId(c.id); setOpenApp(false); }} style={[styles.menuItem, c.id === chosenApp?.id && { backgroundColor: '#E8EDF6' }]}>
+                    <Text style={styles.selectText}>{c.label}</Text>
                   </Pressable>
                 ))}
               </View>
@@ -222,19 +250,19 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
             </View>
             {!!error && <Text style={styles.error}>{error}</Text>}
 
-            <Pressable accessibilityRole="button" accessibilityLabel="Attach document" onPress={() => setAttached((v) => !v)} style={styles.attach}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Attach document" onPress={attach} style={styles.attach}>
               <View style={styles.attachIcon}>
-                <Icon name={attached ? 'file-check-outline' : 'cloud-upload-outline'} size={r.s(18)} color={attached ? GREEN : NAVY} />
+                <Icon name={file ? 'file-check-outline' : 'cloud-upload-outline'} size={r.s(18)} color={file ? GREEN : NAVY} />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
-                <Text style={styles.attachTitle}>{attached ? 'bank-passbook.pdf attached' : 'Attach document (optional)'}</Text>
-                <Text style={styles.attachSub}>{attached ? 'Tap to remove' : 'PDF, JPG up to 2MB (e.g. Bank passbook, NOC)'}</Text>
+                <Text style={styles.attachTitle} numberOfLines={1}>{file ? `${file.name} attached` : 'Attach document (optional)'}</Text>
+                <Text style={styles.attachSub}>{file ? 'Tap to remove' : 'PDF, JPG, PNG up to 2MB (e.g. Bank passbook, NOC)'}</Text>
               </View>
             </Pressable>
 
-            <Pressable accessibilityRole="button" onPress={submit} style={({ pressed }) => [styles.submit, pressed && { opacity: 0.9 }]}>
+            <Pressable accessibilityRole="button" disabled={sending} onPress={submit} style={({ pressed }) => [styles.submit, (pressed || sending) && { opacity: 0.8 }]}>
               <Text style={styles.submitText}>
-                Submit grievance / <Hi style={{ fontFamily: fontFamily.hindiSemibold }}>शिकायत भेजें</Hi>
+                {sending ? 'Submitting… / ' : 'Submit grievance / '}<Hi style={{ fontFamily: fontFamily.hindiSemibold }}>{sending ? 'भेजा जा रहा है' : 'शिकायत भेजें'}</Hi>
               </Text>
               <Icon name="arrow-right" size={r.s(17)} color="#fff" />
             </Pressable>
@@ -245,12 +273,13 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
             My grievances <Hi style={styles.sectionHi}>मेरी शिकायतें</Hi>
           </Text>
           <View style={{ gap: r.s(12) }}>
-            {list.map((g) => {
+            {data.items.length === 0 && <Text style={styles.expandText}>You have not raised any grievance yet.</Text>}
+            {data.items.map((g) => {
               const done = g.status === 'resolved';
               return (
                 <View key={g.id} style={styles.card}>
                   <View style={styles.grvHead}>
-                    <Text style={styles.grvId}>{g.id}</Text>
+                    <Text style={styles.grvId}>{g.ticketNo}</Text>
                     <View style={[styles.status, { backgroundColor: done ? '#E6F4E9' : '#E8EDF6' }]}>
                       <View style={[styles.statusDot, { backgroundColor: done ? GREEN : NAVY }]} />
                       <Text style={[styles.statusText, { color: done ? GREEN : NAVY }]}>{done ? 'Resolved' : 'In progress'}</Text>
@@ -262,16 +291,14 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
                   {!done ? (
                     <>
                       <View style={styles.bar}>
-                        <View style={[styles.barFill, { width: `${Math.round((g.progress ?? 0) * 100)}%` }]} />
+                        <View style={[styles.barFill, { width: `${Math.round(g.progress * 100)}%` }]} />
                       </View>
                       <View style={styles.dueRow}>
                         <Icon name="clock-outline" size={r.s(14)} color={MUTED} />
-                        <Text style={styles.dueText}>{g.due}</Text>
+                        <Text style={styles.dueText}>{g.due ?? ''}</Text>
                       </View>
                       <View style={styles.rule} />
-                      {expanded === g.id && (
-                        <Text style={styles.expandText}>Status: with the District Welfare Officer for verification. You will get an SMS on every update.</Text>
-                      )}
+                      {expanded === g.id && <Text style={styles.expandText}>{g.detail}</Text>}
                       <Pressable accessibilityRole="link" onPress={() => setExpanded((e) => (e === g.id ? null : g.id))} style={styles.viewRow} hitSlop={8}>
                         <Text style={styles.viewText}>
                           View details / <Hi style={{ fontFamily: fontFamily.hindiSemibold }}>विवरण देखें</Hi>
@@ -288,8 +315,8 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
                         </Text>
                         <View style={styles.stars}>
                           {[1, 2, 3, 4, 5].map((n) => (
-                            <Pressable key={n} accessibilityRole="button" accessibilityLabel={`Rate ${n} star${n > 1 ? 's' : ''}`} onPress={() => setRatings((p) => ({ ...p, [g.id]: n }))} hitSlop={4}>
-                              <Icon name={(ratings[g.id] ?? 0) >= n ? 'star' : 'star-outline'} size={r.s(19)} color={(ratings[g.id] ?? 0) >= n ? ORANGE : MUTED} />
+                            <Pressable key={n} accessibilityRole="button" accessibilityLabel={`Rate ${n} star${n > 1 ? 's' : ''}`} onPress={() => rate(g.id, n)} hitSlop={4}>
+                              <Icon name={(rated[g.id] ?? g.rating ?? 0) >= n ? 'star' : 'star-outline'} size={r.s(19)} color={(rated[g.id] ?? g.rating ?? 0) >= n ? ORANGE : MUTED} />
                             </Pressable>
                           ))}
                         </View>

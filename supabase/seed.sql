@@ -111,7 +111,7 @@ insert into grievances (ticket_no, student_id, application_id, category, title, 
 
 -- --------------------------------------------------------------- deadlines
 insert into deadlines (student_id, kind, title, subtitle, due_on, link_to) values
-  ('00000000-0000-4000-8000-000000000001', 'action',   'Re-upload income certificate', 'Post-Matric 2026-27 · Action needed', '2026-10-05', 'wallet'),
+  ('00000000-0000-4000-8000-000000000001', 'action',   'Re-upload admission letter', 'Post-Matric 2026-27 · Action needed', '2026-10-14', 'wallet'),
   ('00000000-0000-4000-8000-000000000001', 'deadline', 'Income certificate expires', 'Renew at e-District, Jharkhand', '2026-10-20', null),
   ('00000000-0000-4000-8000-000000000001', 'deadline', 'Top Class application closes', 'Ministry of Tribal Affairs', '2026-10-31', 'scheme'),
   ('00000000-0000-4000-8000-000000000001', 'renewal',  'Post-Matric renewal opens', 'Renewal for 2027-28', '2026-11-15', null),

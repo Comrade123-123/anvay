@@ -1,6 +1,7 @@
 import { db } from '../_lib/supabase';
 import { fail, json } from '../_lib/http';
 import { DEMO_STUDENT_ID, studentIdFrom } from '../_lib/auth';
+import { addDays, todayIst } from '../_lib/today';
 
 const SEEDED_APPLICATION_ID = '00000000-0000-4000-8000-0000000000a1';
 
@@ -64,6 +65,21 @@ export async function POST(request: Request) {
     await db().from('notifications').delete().eq('student_id', id).gt('created_at', '2026-09-30T00:00:00+05:30');
     await db().from('notifications').update({ unread: true }).eq('student_id', id).in('title', ['₹9,250 credited', 'Institute verified your application', 'Top Class application closes in 32 days']);
     await db().from('notifications').update({ unread: false }).eq('student_id', id).in('title', ['Admission letter needs re-upload', 'JAGO replied to your question']);
+
+    // grievances raised during demos go away; the seeded ones keep no rating
+    await db().from('grievances').delete().eq('student_id', id).not('ticket_no', 'in', '(GRV/2026/00412,GRV/2026/00288)');
+    await db().from('grievances').update({ rating: null }).eq('student_id', id);
+    await db().from('notifications').delete().eq('student_id', id).eq('title', 'Grievance registered');
+
+    // JAGO chat goes back to the greeting
+    await db().from('chat_messages').delete().eq('student_id', id).gt('created_at', '2026-09-29T10:43:00+05:30');
+
+    // the "fix this document" date is always a week from today, so the calendar never starts out overdue
+    await db()
+      .from('deadlines')
+      .update({ title: 'Re-upload admission letter', subtitle: 'Post-Matric 2026-27 · Action needed', due_on: addDays(todayIst(), 7) })
+      .eq('student_id', id)
+      .eq('kind', 'action');
 
     return json({ reset: true });
   } catch {

@@ -172,3 +172,62 @@ export type NotificationItem = {
 };
 
 export type NotificationsData = { unread: number; items: NotificationItem[] };
+
+export type GrievanceItem = {
+  id: string;
+  ticketNo: string;
+  status: 'progress' | 'resolved';
+  category: string;
+  title: string;
+  sub: string;
+  progress: number;
+  due: string | null;
+  detail: string;
+  rating: number | null;
+};
+
+export type GrievancesData = {
+  categories: string[];
+  applications: { id: string; label: string }[];
+  items: GrievanceItem[];
+};
+
+export type CalendarItem = {
+  id: string;
+  kind: 'action' | 'deadline' | 'renewal' | 'payment';
+  date: string;
+  title: string;
+  subtitle: string;
+  linkTo: string | null;
+  daysLeft: number;
+  group: 'This week' | 'This month' | 'Later';
+  pill: string;
+};
+
+export type CalendarData = { today: string; items: CalendarItem[]; priority: CalendarItem | null };
+
+export type ChatCard =
+  | { title: string; applicationNo: string; statusLabel: string; steps: { label: string; state: 'done' | 'current' | 'todo' }[]; info: string }
+  | { title: string; verified: number; total: number; items: { name: string; ok: boolean }[]; upload: string | null };
+
+export type ChatMessage = {
+  id: string;
+  from: 'user' | 'bot';
+  kind: 'text' | 'status' | 'docs';
+  text: string | null;
+  card: ChatCard | null;
+  time: string;
+};
+
+export type WalletDoc = {
+  id: string;
+  kind: string;
+  title: string;
+  titleHi: string | null;
+  issuer: string | null;
+  status: 'verified' | 'pending' | 'rejected' | 'missing';
+  problems: string[];
+  hasFile: boolean;
+  verifiedOn: string;
+  expiresOn: string;
+};

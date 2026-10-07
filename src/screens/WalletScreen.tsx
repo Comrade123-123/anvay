@@ -6,8 +6,13 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import { pickFile } from '../api/pickFile';
+import type { WalletDoc } from '../api/types';
 
-// Screen 9 of ANVAY_ka_kaam.pdf (Document Wallet). Static mock data only.
+// Screen 9 of ANVAY_ka_kaam.pdf (Document Wallet). Documents come from /api/documents; uploads go to private storage.
 // Sizes and icon sizes follow the PDF's drawing data on its 390pt frame: 44pt document tiles with 22pt icons,
 // a 40pt vault tile with a 20pt icon, 20pt chevrons, 22pt header back arrow, 32pt bell button.
 const NAVY = colors.primary;
@@ -21,14 +26,32 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const docs: { icon: IconName; en: string; hi: string; issuer: string }[] = [
-  { icon: 'fingerprint', en: 'Aadhaar Card', hi: 'आधार कार्ड', issuer: 'Issued by Unique Identification Authority of India (UIDAI)' },
-  { icon: 'badge-account-horizontal-outline', en: 'ST Caste Certificate', hi: 'जाति प्रमाण पत्र', issuer: 'Issued by Revenue Department, Mandla, MP' },
-  { icon: 'cash-multiple', en: 'Annual Income Certificate', hi: 'आय प्रमाण पत्र', issuer: 'Issued by Tehsil Office, Mandla' },
-  { icon: 'map-marker-outline', en: 'Permanent Resident Certificate', hi: 'मूल निवास प्रमाण पत्र', issuer: 'Issued by Revenue Dept., Govt. of Madhya Pradesh' },
-  { icon: 'school-outline', en: 'Class 10 & 12 Marksheets', hi: 'अंकसूची', issuer: 'Issued by CBSE / National Academic Depository (NAD)' },
-  { icon: 'file-document-outline', en: 'Bonafide Student Certificate', hi: 'अध्ययन प्रमाण पत्र', issuer: 'Issued by IIT Bombay Academic Registry' },
+const kindIcon: Record<string, IconName> = {
+  aadhaar: 'fingerprint',
+  st_caste: 'badge-account-horizontal-outline',
+  income: 'cash-multiple',
+  residence: 'map-marker-outline',
+  marksheet: 'school-outline',
+  bonafide: 'file-document-outline',
+  admission: 'clipboard-text-outline',
+};
+
+const UPLOADABLE: { kind: string; en: string }[] = [
+  { kind: 'aadhaar', en: 'Aadhaar Card' },
+  { kind: 'st_caste', en: 'ST Caste Certificate' },
+  { kind: 'income', en: 'Annual Income Certificate' },
+  { kind: 'residence', en: 'Permanent Resident Certificate' },
+  { kind: 'marksheet', en: 'Class 10 & 12 Marksheets' },
+  { kind: 'bonafide', en: 'Bonafide Student Certificate' },
+  { kind: 'admission', en: 'Admission Letter' },
 ];
+
+const AMBER = '#896000';
+const RED = '#C62828';
+
+type Filter = 'all' | 'verified' | 'attention';
+const FILTER_LABEL: Record<Filter, string> = { all: 'All documents', verified: 'Verified', attention: 'Needs action' };
+const NEXT_FILTER: Record<Filter, Filter> = { all: 'verified', verified: 'attention', attention: 'all' };
 
 type Props = { onBack?: () => void; onTabSelect?: (key: TabKey) => void; onNotifications?: () => void };
 
@@ -38,21 +61,55 @@ export function WalletScreen({ onBack, onTabSelect, onNotifications }: Props) {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lang, setLang] = useState<'hi' | 'en'>('en');
+  const { data, error, reload } = useApi<WalletDoc[]>('/documents');
   const [fetching, setFetching] = useState(false);
   const [synced, setSynced] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [chooser, setChooser] = useState(false);
+  const [filter, setFilter] = useState<Filter>('all');
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  if (!data) return <LoadState error={error} onRetry={reload} label="Opening your wallet…" />;
 
-  // Mock only: pretends to refresh from DigiLocker, nothing is fetched.
-  const fetchDocs = () => {
+  const verifiedCount = data.filter((d) => d.status === 'verified').length;
+  const visible = data.filter((d) => (filter === 'all' ? true : filter === 'verified' ? d.status === 'verified' : d.status !== 'verified'));
+
+  // Asks DigiLocker (simulated) to refresh the documents it issued.
+  const fetchDocs = async () => {
     if (fetching) return;
     setFetching(true);
     setSynced(false);
-    timer.current = setTimeout(() => {
-      setFetching(false);
+    try {
+      const res = await api.post<{ refreshed: number; needAttention: number }>('/documents/sync');
+      await reload();
       setSynced(true);
-    }, 1200);
+      toast(res.needAttention ? `${res.refreshed} documents refreshed. ${res.needAttention} still need your action.` : `${res.refreshed} documents refreshed from DigiLocker.`);
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not reach DigiLocker.');
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const upload = async (kind: string) => {
+    if (uploading) return;
+    setChooser(false);
+    try {
+      const file = await pickFile();
+      if (!file) return;
+      setUploading(kind);
+      const res = await api.post<{ status: string; problems: string[] }>('/documents/upload', { kind, fileName: file.name, contentType: file.type, dataBase64: file.base64 });
+      await reload();
+      toast(res.status === 'verified' ? 'Document uploaded and verified.' : `Document was not accepted${res.problems.length ? `: ${res.problems.join(', ')}` : ''}. Please upload a clearer copy.`);
+    } catch (e) {
+      toast(e instanceof ApiError || e instanceof Error ? e.message : 'Could not upload the document.');
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const openDoc = (d: WalletDoc) => {
+    if (d.status === 'verified') toast(`${d.title}: verified${d.verifiedOn ? ` on ${d.verifiedOn}` : ''}${d.expiresOn ? `, valid till ${d.expiresOn}` : ''}.`);
+    else upload(d.kind);
   };
 
   const chev = r.s(20);
@@ -130,7 +187,7 @@ export function WalletScreen({ onBack, onTabSelect, onNotifications }: Props) {
                 <Icon name="shield-outline" size={r.s(13)} color={ORANGE} />
                 <Text style={styles.vaultFootText}>256-Bit SHA Encrypted</Text>
               </View>
-              <Text style={styles.vaultFootRight}>6 of 6 Documents Live</Text>
+              <Text style={styles.vaultFootRight}>{verifiedCount} of {data.length} Documents Verified</Text>
             </View>
           </View>
 
@@ -139,31 +196,43 @@ export function WalletScreen({ onBack, onTabSelect, onNotifications }: Props) {
             <Text style={styles.sectionLabel}>
               VERIFIED CREDENTIALS / <Hi style={styles.sectionLabel}>प्रमाण पत्र</Hi>
             </Text>
-            <Pressable accessibilityRole="button" hitSlop={10} onPress={() => toast('Showing all documents (demo)')} style={styles.filterBtn}>
-              <Text style={styles.filterText}>Filter by Status</Text>
+            <Pressable accessibilityRole="button" hitSlop={10} onPress={() => setFilter(NEXT_FILTER[filter])} style={styles.filterBtn}>
+              <Text style={styles.filterText}>{FILTER_LABEL[filter]}</Text>
               <Icon name="menu-down" size={r.s(16)} color={DARK} />
             </Pressable>
           </View>
 
           {/* Credentials */}
-          {docs.map((d) => (
-            <Pressable key={d.en} accessibilityRole="button" onPress={() => toast(`Opening ${d.en} (demo)`)} style={({ pressed }) => [styles.doc, pressed && { opacity: 0.9 }]}>
-              <View style={styles.docTile}>
-                <Icon name={d.icon} size={r.s(22)} color={DARK} />
-              </View>
-              <View style={styles.docBody}>
-                <Text style={styles.docTitle}>
-                  {d.en} <Hi style={styles.docHi}>/{' '}{d.hi.replace(/ /g, ' ')}</Hi>
-                </Text>
-                <View style={styles.verified}>
-                  <Icon name="check-circle" size={r.s(12)} color="#138708" />
-                  <Text style={styles.verifiedText}>Verified via DigiLocker</Text>
+          {visible.length === 0 && <Text style={[styles.docIssuer, { textAlign: 'center', marginVertical: r.s(16) }]}>No documents in this view.</Text>}
+          {visible.map((d) => {
+            const ok = d.status === 'verified';
+            const busy = uploading === d.kind;
+            return (
+              <Pressable key={d.id} accessibilityRole="button" onPress={() => openDoc(d)} style={({ pressed }) => [styles.doc, !ok && { borderColor: '#F4C1C6' }, pressed && { opacity: 0.9 }]}>
+                <View style={styles.docTile}>
+                  <Icon name={kindIcon[d.kind] ?? 'file-document-outline'} size={r.s(22)} color={ok ? DARK : RED} />
                 </View>
-                <Text style={styles.docIssuer}>{d.issuer}</Text>
-              </View>
-              <Icon name="chevron-right" size={chev} color="#697585" />
-            </Pressable>
-          ))}
+                <View style={styles.docBody}>
+                  <Text style={styles.docTitle}>
+                    {d.title}
+                    {d.titleHi ? <Hi style={styles.docHi}> / {d.titleHi}</Hi> : null}
+                  </Text>
+                  <View style={styles.verified}>
+                    {busy ? <ActivityIndicator size="small" color={NAVY} /> : <Icon name={ok ? 'check-circle' : 'alert-circle-outline'} size={r.s(12)} color={ok ? '#138708' : d.status === 'pending' ? AMBER : RED} />}
+                    <Text style={[styles.verifiedText, !ok && { color: d.status === 'pending' ? AMBER : RED }]}>
+                      {busy
+                        ? 'Uploading…'
+                        : ok
+                          ? d.issuer === 'Uploaded by student' ? 'Uploaded and verified' : 'Verified via DigiLocker'
+                          : d.status === 'pending' ? 'Verification pending' : `Needs re-upload${d.problems.length ? ` · ${d.problems.join(', ')}` : ''}`}
+                    </Text>
+                  </View>
+                  {!!d.issuer && d.issuer !== 'Uploaded by student' && <Text style={styles.docIssuer}>Issued by {d.issuer}</Text>}
+                </View>
+                <Icon name={ok ? 'chevron-right' : 'upload'} size={chev} color={ok ? '#697585' : RED} />
+              </Pressable>
+            );
+          })}
 
           {/* Actions */}
           <Pressable
@@ -185,12 +254,23 @@ export function WalletScreen({ onBack, onTabSelect, onNotifications }: Props) {
             </View>
           </Pressable>
 
-          <Pressable accessibilityRole="button" onPress={() => toast('Choose a file to upload (demo)')} style={({ pressed }) => [styles.uploadBtn, pressed && { opacity: 0.85 }]}>
+          <Pressable accessibilityRole="button" onPress={() => setChooser((v) => !v)} style={({ pressed }) => [styles.uploadBtn, pressed && { opacity: 0.85 }]}>
             <Icon name="plus-circle-outline" size={r.s(20)} color="#FFFFFF" />
             <Text style={styles.uploadText}>
               Upload Certificate / <Hi style={styles.uploadText}>नया दस्तावेज़ अपलोड करें</Hi>
             </Text>
           </Pressable>
+          {chooser && (
+            <View style={[styles.doc, { flexDirection: 'column', alignItems: 'stretch', gap: r.s(2) }]}>
+              <Text style={[styles.docIssuer, { marginBottom: r.s(6) }]}>Which document are you uploading? (JPG, PNG or PDF, up to 2 MB)</Text>
+              {UPLOADABLE.map((u) => (
+                <Pressable key={u.kind} accessibilityRole="button" onPress={() => upload(u.kind)} style={{ paddingVertical: r.s(10), flexDirection: 'row', alignItems: 'center', gap: r.s(10) }}>
+                  <Icon name={kindIcon[u.kind]} size={r.s(18)} color={DARK} />
+                  <Text style={styles.docTitle}>{u.en}</Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           {/* Footer */}
           <View style={styles.footer}>

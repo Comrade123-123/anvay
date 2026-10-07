@@ -5,9 +5,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { ChatCard, ChatMessage } from '../api/types';
 
-// Screen 20 of ANVAY_ka_kaam.pdf (JAGO – Scholarship Sahayak chat). Static mock data only: replies are canned
-// client-side text, there is no AI / API behind this screen.
+// Screen 20 of ANVAY_ka_kaam.pdf (JAGO – Scholarship Sahayak chat). Messages are stored through /api/chat; JAGO answers
+// from the student's own records with keyword rules (no AI model).
 // Sizes follow the PDF's drawing data on its 390pt frame: 36pt header avatar, 26pt chat avatars, 28pt timeline dots,
 // 40pt mic/send buttons, 27pt quick-reply chips, 32pt document rows, 14/12/11.5pt text.
 // The PDF render clipped the quick-reply row at the page edge and squeezed the composer hint; here the chips scroll
@@ -25,35 +29,15 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-type Msg =
-  | { id: string; from: 'bot'; kind: 'greeting'; time: string }
-  | { id: string; from: 'bot'; kind: 'status'; time: string }
-  | { id: string; from: 'bot'; kind: 'docs'; time: string }
-  | { id: string; from: 'bot'; kind: 'text'; text: string; time: string }
-  | { id: string; from: 'user'; text: string; time: string; hindi?: boolean };
+const hasDevanagari = (s: string) => /[\u0900-\u097F]/.test(s);
 
-const initial: Msg[] = [
-  { id: 'm1', from: 'bot', kind: 'greeting', time: '10:42 AM' },
-  { id: 'm2', from: 'user', text: 'मेरा पैसा कब आएगा?', time: '10:43 AM · Read', hindi: true },
-  { id: 'm3', from: 'bot', kind: 'status', time: '10:43 AM' },
-  { id: 'm4', from: 'user', text: 'Top Class ke liye kaunse documents chahiye?', time: '10:44 AM · Read' },
-  { id: 'm5', from: 'bot', kind: 'docs', time: '10:45 AM' },
+// The quick replies send these words to JAGO, which answers from the student's records.
+const chips: { icon: string; en: string; hi: string }[] = [
+  { icon: 'format-list-checks', en: 'Check status', hi: 'स्थिति जांचें' },
+  { icon: 'account-check-outline', en: 'Am I eligible?', hi: 'क्या मैं योग्य हूँ?' },
+  { icon: 'file-document-outline', en: 'My documents', hi: 'मेरे दस्तावेज़' },
+  { icon: 'calendar-clock-outline', en: 'Deadlines', hi: 'अंतिम तिथियाँ' },
 ];
-
-const chips: { icon: string; en: string; hi: string; reply: string }[] = [
-  { icon: 'format-list-checks', en: 'Check status', hi: 'स्थिति जांचें', reply: 'Your Post-Matric application is Sanctioned. Expected payment of ₹18,500 in about 12 days.' },
-  { icon: 'account-check-outline', en: 'Am I eligible?', hi: 'क्या मैं योग्य हूँ?', reply: 'Based on your saved profile you look eligible for Post-Matric and Top Class. Open Schemes to compare them.' },
-  { icon: 'file-document-outline', en: 'My documents', hi: 'मेरे दस्तावेज़', reply: '3 of 4 documents are verified via DigiLocker. Only the admission letter is pending.' },
-  { icon: 'calendar-clock-outline', en: 'Deadlines', hi: 'अंतिम तिथियाँ', reply: 'Top Class applications close on 31 Oct 2026. Your income certificate expires on 20 Oct.' },
-];
-
-const now = () => {
-  const d = new Date();
-  let h = d.getHours();
-  const ap = h >= 12 ? 'PM' : 'AM';
-  h = h % 12 || 12;
-  return `${h}:${String(d.getMinutes()).padStart(2, '0')} ${ap}`;
-};
 
 type Props = {
   onBack?: () => void;
@@ -61,53 +45,48 @@ type Props = {
   onUpload?: () => void;
 };
 
-const steps = [
-  { label: 'Submitted', state: 'done' },
-  { label: 'Verified', state: 'done' },
-  { label: 'Sanctioned', state: 'current' },
-  { label: 'Credited', state: 'todo' },
-] as const;
-
-const docs = [
-  { n: '1. Aadhaar Card', ok: true },
-  { n: '2. ST Caste Certificate', ok: true },
-  { n: '3. Income Certificate (< ₹8L)', ok: true },
-  { n: '4. Admission Letter (IIT Kharagpur)', ok: false },
-];
-
 export function ChatScreen({ onBack, onOpenDetails, onUpload }: Props) {
   const toast = useToast();
   const r = useResponsive();
   const styles = useMemo(() => makeStyles(r), [r.width]);
   const insets = useSafeAreaInsets();
   const scroller = useRef<ScrollView>(null);
-  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const [lang, setLang] = useState<'en' | 'hi'>('en');
-  const [messages, setMessages] = useState<Msg[]>(initial);
+  const { data, error, reload } = useApi<{ messages: ChatMessage[] }>('/chat');
+  const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
 
-  useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    if (data) setMessages(data.messages);
+  }, [data]);
 
-  const push = (m: Msg) => setMessages((prev) => [...prev, m]);
-
-  const ask = (q: string, reply: string, hindi = false) => {
-    push({ id: `u${Date.now()}`, from: 'user', text: q, time: `${now()} · Read`, hindi });
+  const ask = async (q: string) => {
+    const question = q.trim();
+    if (!question || typing) return;
+    const tempId = `tmp-${Date.now()}`;
+    setMessages((prev) => [...(prev ?? []), { id: tempId, from: 'user', kind: 'text', text: question, card: null, time: '' }]);
     setTyping(true);
-    timers.current.push(
-      setTimeout(() => {
-        setTyping(false);
-        push({ id: `b${Date.now()}`, from: 'bot', kind: 'text', text: reply, time: now() });
-      }, 700),
-    );
+    try {
+      const res = await api.post<{ messages: ChatMessage[] }>('/chat', { message: question, lang });
+      setMessages((prev) => [...(prev ?? []).filter((m) => m.id !== tempId), ...res.messages]);
+    } catch (e) {
+      setMessages((prev) => (prev ?? []).filter((m) => m.id !== tempId));
+      setText(question);
+      toast(e instanceof ApiError ? e.message : 'JAGO could not answer. Please try again.');
+    } finally {
+      setTyping(false);
+    }
   };
 
   const send = () => {
     const q = text.trim();
     if (!q) return;
     setText('');
-    ask(q, 'Thanks for your question. I am a demo assistant, so for now I can help with status, eligibility, documents and deadlines — tap a quick reply below.');
+    ask(q);
   };
+
+  if (!messages) return <LoadState error={error} onRetry={reload} label="Opening your chat…" />;
 
   const Avatar = () => (
     <View style={styles.botAvatar}>
@@ -125,59 +104,50 @@ export function ChatScreen({ onBack, onOpenDetails, onUpload }: Props) {
     </View>
   );
 
-  const renderMsg = (m: Msg) => {
+  const renderMsg = (m: ChatMessage) => {
     if (m.from === 'user') {
+      const q = m.text ?? '';
       return (
         <View key={m.id} style={styles.userRow}>
           <View style={styles.userBubble}>
-            {m.hindi ? <Hi style={styles.userText}>{m.text}</Hi> : <Text style={styles.userText}>{m.text}</Text>}
+            {hasDevanagari(q) ? <Hi style={styles.userText}>{q}</Hi> : <Text style={styles.userText}>{q}</Text>}
           </View>
           <View style={styles.readRow}>
-            <Text style={styles.time}>{m.time}</Text>
-            <Icon name="check-all" size={r.s(13)} color={GREEN} />
+            <Text style={styles.time}>{m.time ? `${m.time} · Read` : 'Sending…'}</Text>
+            <Icon name="check-all" size={r.s(13)} color={m.time ? GREEN : MUTED} />
           </View>
         </View>
       );
     }
-    if (m.kind === 'greeting') {
-      return (
-        <Bot key={m.id} time={m.time}>
-          <View style={styles.bubble}>
-            <Hi style={styles.botText}>
-              नमस्ते रमेश! मैं <Text style={{ fontFamily: fontFamily.hindiBold, color: DARK }}>JAGO</Text> हूँ, आपका छात्रवृत्ति सहायक। मैं आपकी छात्रवृत्ति में कैसे मदद करूँ?
-            </Hi>
-          </View>
-        </Bot>
-      );
-    }
     if (m.kind === 'text') {
+      const reply = m.text ?? '';
       return (
         <Bot key={m.id} time={m.time}>
           <View style={styles.bubble}>
-            <Text style={styles.botTextEn}>{m.text}</Text>
+            {hasDevanagari(reply) ? <Hi style={styles.botText}>{reply}</Hi> : <Text style={styles.botTextEn}>{reply}</Text>}
           </View>
         </Bot>
       );
     }
-    if (m.kind === 'status') {
+    const card = m.card as ChatCard | null;
+    if (!card) return null;
+    if (m.kind === 'status' && 'steps' in card) {
       return (
         <Bot key={m.id} time={m.time} wide>
           <View style={styles.card}>
             <View style={styles.cardHead}>
               <View style={{ flex: 1, minWidth: r.s(130) }}>
-                <Text style={styles.cardTitle}>Post-Matric{'\n'}Scholarship 2026-27</Text>
-                <Text style={styles.cardId}>ID: MoTA-ST-2026-88941</Text>
+                <Text style={styles.cardTitle}>{card.title}</Text>
+                <Text style={styles.cardId}>ID: {card.applicationNo}</Text>
               </View>
               <View style={styles.pill}>
-                <Text style={styles.pillText}>
-                  In Review / <Hi>समीक्षाधीन</Hi>
-                </Text>
+                <Text style={styles.pillText}>{card.statusLabel}</Text>
               </View>
             </View>
             <View style={styles.rule} />
 
             <View style={styles.stepper}>
-              {steps.map((s, i) => (
+              {card.steps.map((s, i) => (
                 <View key={s.label} style={styles.step}>
                   {i > 0 && (
                     <View
@@ -215,10 +185,7 @@ export function ChatScreen({ onBack, onOpenDetails, onUpload }: Props) {
 
             <View style={styles.info}>
               <Icon name="information-outline" size={r.s(18)} color={NAVY} style={{ marginTop: r.s(1) }} />
-              <Text style={styles.infoText}>
-                <Text style={{ fontFamily: fontFamily.bold, color: DARK }}>District review pending.</Text> Expected payment of{' '}
-                <Text style={{ fontFamily: fontFamily.bold, color: DARK }}>₹18,500</Text> in about 12 days to your Aadhaar-linked SBI bank account.
-              </Text>
+              <Text style={styles.infoText}>{card.info}</Text>
             </View>
 
             <Pressable accessibilityRole="link" onPress={onOpenDetails} style={styles.detailsLink} hitSlop={8}>
@@ -231,40 +198,41 @@ export function ChatScreen({ onBack, onOpenDetails, onUpload }: Props) {
         </Bot>
       );
     }
-    // docs
-    return (
-      <Bot key={m.id} time={m.time} wide>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Top Class Scholarship · Required Documents</Text>
-          <View style={styles.verifiedLine}>
-            <Icon name="check-decagram-outline" size={r.s(14)} color={GREEN} />
-            <Text style={styles.verifiedText}>3 of 4 documents auto-verified via DigiLocker</Text>
-          </View>
-          <View style={styles.rule} />
-          <View style={{ gap: r.s(8) }}>
-            {docs.map((d) => (
-              <View key={d.n} style={[styles.docRow, !d.ok && styles.docRowBad]}>
-                <Text style={styles.docName}>{d.n}</Text>
-                <View style={styles.docStatus}>
-                  <Icon name={d.ok ? 'check-circle-outline' : 'close-circle-outline'} size={r.s(16)} color={d.ok ? GREEN : RED} />
-                  <Text style={[styles.docStatusText, { color: d.ok ? GREEN : RED }]}>{d.ok ? 'Verified' : 'Upload\nneeded'}</Text>
+    if (m.kind === 'docs' && 'items' in card) {
+      const allOk = card.verified === card.total;
+      return (
+        <Bot key={m.id} time={m.time} wide>
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>{card.title}</Text>
+            <View style={styles.verifiedLine}>
+              <Icon name="check-decagram-outline" size={r.s(14)} color={GREEN} />
+              <Text style={styles.verifiedText}>{card.verified} of {card.total} documents verified</Text>
+            </View>
+            <View style={styles.rule} />
+            <View style={{ gap: r.s(8) }}>
+              {card.items.map((d) => (
+                <View key={d.name} style={[styles.docRow, !d.ok && styles.docRowBad]}>
+                  <Text style={styles.docName}>{d.name}</Text>
+                  <View style={styles.docStatus}>
+                    <Icon name={d.ok ? 'check-circle-outline' : 'close-circle-outline'} size={r.s(16)} color={d.ok ? GREEN : RED} />
+                    <Text style={[styles.docStatusText, { color: d.ok ? GREEN : RED }]}>{d.ok ? 'Verified' : 'Upload\nneeded'}</Text>
+                  </View>
                 </View>
-              </View>
-            ))}
+              ))}
+            </View>
+            {!allOk && card.upload && (
+              <Pressable accessibilityRole="button" onPress={onUpload} style={({ pressed }) => [styles.uploadBtn, pressed && { opacity: 0.9 }]}>
+                <Icon name="file-upload-outline" size={r.s(17)} color="#fff" />
+                <Text style={styles.uploadText}>
+                  Upload {card.upload.toLowerCase()} now / <Hi style={{ fontFamily: fontFamily.hindiSemibold }}>अभी अपलोड करें</Hi> →
+                </Text>
+              </Pressable>
+            )}
           </View>
-          <Pressable
-            accessibilityRole="button"
-            onPress={onUpload}
-            style={({ pressed }) => [styles.uploadBtn, pressed && { opacity: 0.9 }]}
-          >
-            <Icon name="file-upload-outline" size={r.s(17)} color="#fff" />
-            <Text style={styles.uploadText}>
-              Upload admission letter now / <Hi style={{ fontFamily: fontFamily.hindiSemibold }}>अभी अपलोड करें</Hi> →
-            </Text>
-          </Pressable>
-        </View>
-      </Bot>
-    );
+        </Bot>
+      );
+    }
+    return null;
   };
 
   return (
@@ -363,7 +331,7 @@ export function ChatScreen({ onBack, onOpenDetails, onUpload }: Props) {
             <Pressable
               key={c.en}
               accessibilityRole="button"
-              onPress={() => ask(lang === 'hi' ? c.hi : c.en, c.reply, lang === 'hi')}
+              onPress={() => ask(lang === 'hi' ? c.hi : c.en)}
               style={({ pressed }) => [styles.chip, pressed && { backgroundColor: '#E8EDF6' }]}
             >
               <Icon name={c.icon as any} size={r.s(14)} color={NAVY} />

@@ -6,13 +6,16 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { useApi } from '../api/useApi';
+import type { CalendarData } from '../api/types';
 
-// Screen 19 of ANVAY_ka_kaam.pdf (Calendar & Deadlines). Static mock data only.
+// Screen 19 of ANVAY_ka_kaam.pdf (Calendar & Deadlines). The dates come from /api/calendar.
 // Sizes follow the PDF's drawing data on its 390pt frame: 38pt header circle, 32pt month tile, 30pt month arrows,
 // 32pt day circles, 33pt filter chips, 20pt date numbers, 23pt "days" pills, 36 x 20 toggle.
 // The PDF render had overlapping layers (the list heading and filter chips drawn over the calendar, the priority
 // card wider than the page), so the order here follows the data: header + priority card, month, filters, list, reminders.
-// The month grid is real (any month, Monday first); "today" is fixed at 29/09/2026 to match the design.
+// The month grid is real (any month, Monday first); "today" is the server's date in India.
 const NAVY = colors.primary;
 const DARK = colors.primaryDark;
 const ORANGE = colors.accent;
@@ -24,8 +27,6 @@ const INK = '#1F2836';
 const MUTED = '#5E6B79';
 const GREY = '#9CA3AF';
 
-const TODAY = { y: 2026, m: 8, d: 29 }; // month is 0-based
-const START = { y: 2026, m: 9 }; // October 2026 like the design
 
 type Kind = 'action' | 'deadline' | 'renewal' | 'payment';
 const kindColor: Record<Kind, string> = { action: RED, deadline: AMBER, renewal: NAVY, payment: GREEN };
@@ -45,22 +46,31 @@ type Ev = {
   date: [number, number, number]; // y, m (0-based), d
   kind: Kind;
   group: 'This week' | 'This month' | 'Later';
-  label: { d?: string; mon: string };
+  label: { d: string; mon: string };
   title: string;
   sub: string;
-  subAccent?: string;
   pill: string;
-  link?: 'apply';
+  link?: 'apply' | 'wallet' | 'dbt';
   fill?: boolean; // calendar cell drawn as a filled amber day
 };
 
-const events: Ev[] = [
-  { id: 'e1', date: [2026, 9, 5], kind: 'action', group: 'This week', label: { d: '05', mon: 'OCT' }, title: 'Re-upload income certificate', sub: 'Post-Matric 2026-27 · ', subAccent: 'Action needed', pill: '5 days' },
-  { id: 'e2', date: [2026, 9, 20], kind: 'deadline', group: 'This month', label: { d: '20', mon: 'OCT' }, title: 'Income certificate expires', sub: 'Renew at e-District, Jharkhand', pill: '21 days' },
-  { id: 'e3', date: [2026, 9, 31], kind: 'deadline', group: 'This month', label: { d: '31', mon: 'OCT' }, title: 'Top Class application closes', sub: 'Ministry of Tribal Affairs', pill: '32 days', link: 'apply', fill: true },
-  { id: 'e4', date: [2026, 10, 15], kind: 'renewal', group: 'Later', label: { d: '15', mon: 'NOV' }, title: 'Post-Matric renewal opens', sub: 'Renewal for 2027-28', pill: 'Renewal' },
-  { id: 'e5', date: [2026, 11, 1], kind: 'payment', group: 'Later', label: { mon: 'DEC' }, title: 'Expected instalment credit', sub: '₹9,250 to SBI ••••4417', pill: 'Payment' },
-];
+const monShort = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+const toEvent = (i: CalendarData['items'][number]): Ev => {
+  const [y, m, d] = i.date.split('-').map(Number);
+  return {
+    id: i.id,
+    date: [y, m - 1, d],
+    kind: i.kind,
+    group: i.group,
+    label: { d: String(d).padStart(2, '0'), mon: monShort[m - 1] },
+    title: i.title,
+    sub: i.subtitle,
+    pill: i.pill,
+    link: i.linkTo === 'scheme' ? 'apply' : i.linkTo === 'wallet' ? 'wallet' : i.linkTo === 'dbt' ? 'dbt' : undefined,
+    fill: i.kind === 'deadline' && i.linkTo === 'scheme',
+  };
+};
 
 const pillStyle: Record<Kind, { bg: string; fg: string }> = {
   action: { bg: '#FDEBEB', fg: RED },
@@ -139,22 +149,30 @@ export function CalendarScreen({ onBack, onTabSelect, onDoItNow, onApply }: Prop
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [month, setMonth] = useState({ y: START.y, m: START.m });
+  const { data, error, reload } = useApi<CalendarData>('/calendar');
+  const [month, setMonth] = useState<{ y: number; m: number } | null>(null);
   const [filter, setFilter] = useState<'all' | Kind>('all');
   const [sms, setSms] = useState(true);
 
-  const rows = useMemo(() => buildMonth(month.y, month.m), [month]);
+  const events = useMemo(() => (data?.items ?? []).map(toEvent), [data]);
+  const todayParts = (data?.today ?? '2000-01-01').split('-').map(Number);
+  const TODAY = { y: todayParts[0], m: todayParts[1] - 1, d: todayParts[2] };
+  const shown = month ?? { y: TODAY.y, m: TODAY.m };
+  const rows = useMemo(() => buildMonth(shown.y, shown.m), [shown.y, shown.m]);
   const byDate = useMemo(() => {
     const map: Record<string, Ev> = {};
     events.forEach((e) => {
-      if (e.id !== 'e5') map[key(...e.date)] = e;
+      // payments and renewals are not marked on the grid, they only appear in the list
+      if (e.kind === 'action' || e.kind === 'deadline') map[key(...e.date)] = e;
     });
     return map;
-  }, []);
+  }, [events]);
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading your calendar…" />;
 
   const shift = (delta: number) =>
-    setMonth((cur) => {
-      const dt = new Date(cur.y, cur.m + delta, 1);
+    setMonth(() => {
+      const dt = new Date(shown.y, shown.m + delta, 1);
       return { y: dt.getFullYear(), m: dt.getMonth() };
     });
 
@@ -180,7 +198,7 @@ export function CalendarScreen({ onBack, onTabSelect, onDoItNow, onApply }: Prop
                 <Text style={styles.title}>Calendar & Deadlines</Text>
                 <Hi style={styles.titleHi}>कैलेंडर और तिथियाँ</Hi>
               </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="Sync calendar" onPress={() => toast('Calendar synced with your phone (demo)')} style={styles.syncBtn}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Sync calendar" onPress={async () => { await reload(); toast('Calendar refreshed'); }} style={styles.syncBtn}>
                 <Icon name="sync" size={r.s(18)} color="#FFFFFF" />
               </Pressable>
             </View>
@@ -197,24 +215,30 @@ export function CalendarScreen({ onBack, onTabSelect, onDoItNow, onApply }: Prop
 
         <View style={styles.column}>
           {/* Priority card overlapping the header */}
-          <View style={styles.priority}>
-            <View style={styles.daysCol}>
-              <Text style={styles.daysNum}>05</Text>
-              <Text style={styles.daysEn}>days left</Text>
-              <Hi style={styles.daysHi}>दिन बाकी</Hi>
+          {data.priority && (
+            <View style={styles.priority}>
+              <View style={styles.daysCol}>
+                <Text style={styles.daysNum}>{String(Math.max(0, data.priority.daysLeft)).padStart(2, '0')}</Text>
+                <Text style={styles.daysEn}>days left</Text>
+                <Hi style={styles.daysHi}>दिन बाकी</Hi>
+              </View>
+              <View style={styles.priorityDivider} />
+              <View style={{ flex: 1, minWidth: 0 }}>
+                <Text style={styles.priorityTitle}>{data.priority.title}</Text>
+                <Text style={styles.prioritySub}>
+                  {data.priority.subtitle.replace(/ · Action needed$/, '')} · <Text style={{ color: RED }}>Due {data.priority.date.split('-').reverse().join('/')}</Text>
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={data.priority.linkTo === 'scheme' ? onApply : onDoItNow}
+                  style={({ pressed }) => [styles.doNow, pressed && { opacity: 0.9 }]}
+                >
+                  <Text style={styles.doNowText}>{data.priority.linkTo === 'scheme' ? 'Apply now' : 'Do it now'}</Text>
+                  <Icon name="arrow-right" size={r.s(16)} color="#FFFFFF" />
+                </Pressable>
+              </View>
             </View>
-            <View style={styles.priorityDivider} />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.priorityTitle}>Re-upload income certificate</Text>
-              <Text style={styles.prioritySub}>
-                Post-Matric 2026-27 · <Text style={{ color: RED }}>Due 05/10/2026</Text>
-              </Text>
-              <Pressable accessibilityRole="button" onPress={onDoItNow} style={({ pressed }) => [styles.doNow, pressed && { opacity: 0.9 }]}>
-                <Text style={styles.doNowText}>Do it now</Text>
-                <Icon name="arrow-right" size={r.s(16)} color="#FFFFFF" />
-              </Pressable>
-            </View>
-          </View>
+          )}
 
           {/* Month */}
           <View style={styles.month}>
@@ -224,10 +248,10 @@ export function CalendarScreen({ onBack, onTabSelect, onDoItNow, onApply }: Prop
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.monthTitle}>
-                  {monthEn[month.m]} {month.y}
+                  {monthEn[shown.m]} {shown.y}
                 </Text>
                 <Hi style={styles.monthHi}>
-                  {monthHi[month.m]} {month.y}
+                  {monthHi[shown.m]} {shown.y}
                 </Hi>
               </View>
               <Pressable accessibilityRole="button" accessibilityLabel="Previous month" onPress={() => shift(-1)} style={styles.arrow}>
@@ -339,27 +363,18 @@ export function CalendarScreen({ onBack, onTabSelect, onDoItNow, onApply }: Prop
                 {rowsG.map((e) => (
                   <View key={e.id} style={styles.item}>
                     <View style={styles.dateCol}>
-                      {e.label.d ? (
-                        <>
-                          <Text style={[styles.dateNum, { color: dateColor[e.kind] }]}>{e.label.d}</Text>
-                          <Text style={[styles.dateMon, { color: dateColor[e.kind] }]}>{e.label.mon}</Text>
-                        </>
-                      ) : (
-                        <>
-                          <Text style={[styles.dateMonBig, { color: dateColor[e.kind] }]}>{e.label.mon}</Text>
-                          <Text style={[styles.dateYear, { color: dateColor[e.kind] }]}>2026</Text>
-                        </>
-                      )}
+                      <Text style={[styles.dateNum, { color: dateColor[e.kind] }]}>{e.label.d}</Text>
+                      <Text style={[styles.dateMon, { color: dateColor[e.kind] }]}>{e.label.mon}</Text>
                     </View>
                     <View style={{ flex: 1, minWidth: 0 }}>
                       <Text style={styles.itemTitle}>{e.title}</Text>
                       <Text style={styles.itemSub}>
-                        {e.sub}
-                        {e.subAccent && <Text style={{ color: RED }}>{e.subAccent}</Text>}
+                        {e.kind === 'action' ? e.sub.replace(/ · Action needed$/, ' · ') : e.sub}
+                        {e.kind === 'action' && <Text style={{ color: RED }}>Action needed</Text>}
                       </Text>
-                      {e.link === 'apply' && (
-                        <Pressable accessibilityRole="button" onPress={onApply} hitSlop={6} style={styles.applyLink}>
-                          <Text style={styles.applyLinkText}>Apply now</Text>
+                      {e.link && e.kind !== 'action' && (
+                        <Pressable accessibilityRole="button" onPress={e.link === 'apply' ? onApply : onDoItNow} hitSlop={6} style={styles.applyLink}>
+                          <Text style={styles.applyLinkText}>{e.link === 'apply' ? 'Apply now' : e.link === 'dbt' ? 'View payments' : 'Open'}</Text>
                           <Icon name="arrow-right" size={r.s(14)} color={NAVY} />
                         </Pressable>
                       )}
