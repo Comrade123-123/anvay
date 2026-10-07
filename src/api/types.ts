@@ -37,6 +37,8 @@ export type HomeData = {
     steps: HomeStep[];
   } | null;
   unreadCount: number;
+  alert: { kind: 'document' | 'seeding'; title: string; body: string; due: string | null; linkTo: 'wallet' | 'seeding' } | null;
+  nextDeadline: { title: string; subtitle: string; date: string; daysLeft: number } | null;
 };
 
 export type OtpKind = 'mobile' | 'aadhaar';

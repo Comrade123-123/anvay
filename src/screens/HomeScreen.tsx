@@ -10,9 +10,9 @@ import { OnboardingIllustration } from '../components/OnboardingIllustration';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 import { LoadState } from '../components/LoadState';
 import { useApi } from '../api/useApi';
-import type { HomeData } from '../api/types';
+import type { HomeData, SchemesData } from '../api/types';
 
-// Screen 5 of ANVAY_ka_kaam.pdf (home dashboard). Static mock data only.
+// Screen 5 of ANVAY_ka_kaam.pdf (home dashboard). Everything on it comes from /api/home and /api/schemes.
 // Alignment fixes vs. the reference: real logo in the header, one shared 16pt gutter,
 // equal-width quick actions, a swipeable scheme carousel, the tab bar on one baseline, and the
 // chat button floating above the tab bar instead of covering content.
@@ -34,13 +34,19 @@ const quickActions: { icon: IconName; en: string; hi: string }[] = [
   { icon: 'headset', en: 'Grievance', hi: 'शिकायत निवारण' },
 ];
 
-const schemes = [
-  { id: 'pre', tag: 'Classes 9 & 10', status: 'Approved', tone: 'green', title: 'Pre-Matric ST Scholarship', desc: 'Annual stipend & book grant for hostellers & day scholars.', amount: '₹3,500' },
-  { id: 'top', tag: 'IIT / NIT / AIIMS', status: 'Open', tone: 'gold', title: 'Top Class Education', desc: 'Full tuition cover + ₹86,000 allowance + IT laptop grant.', amount: '₹1,25,000' },
-  { id: 'post', tag: 'Class 11 onwards', status: 'Approved', tone: 'green', title: 'Post-Matric Scholarship', desc: 'Tuition, maintenance allowance and study tour support.', amount: '₹18,500' },
-  { id: 'nos', tag: 'Overseas study', status: 'Open', tone: 'gold', title: 'National Overseas Scholarship', desc: 'Tuition, living allowance and airfare for masters and PhD abroad.', amount: '₹20,00,000' },
-  { id: 'nfs', tag: 'M.Phil / PhD', status: 'Open', tone: 'gold', title: 'National Fellowship', desc: 'Monthly fellowship with contingency grant for research scholars.', amount: '₹37,000' },
-] as const;
+const categoryTag: Record<string, string> = {
+  pre: 'Classes 9 & 10',
+  post: 'Class 11 onwards',
+  higher: 'Top institutes',
+  fellowship: 'M.Phil / PhD',
+  overseas: 'Overseas study',
+};
+
+const statusChip = {
+  enrolled: { label: 'Enrolled', tone: 'green' },
+  eligible: { label: 'Eligible', tone: 'gold' },
+  not_eligible: { label: 'Not eligible', tone: 'grey' },
+} as const;
 
 type Props = {
   onTabSelect?: (key: TabKey) => void;
@@ -53,6 +59,7 @@ type Props = {
   onOpenChat?: () => void;
   onOpenHelp?: () => void;
   onOpenSeeding?: () => void;
+  onOpenScheme?: (code: string) => void;
 };
 
 export function HomeScreen({
@@ -66,6 +73,7 @@ export function HomeScreen({
   onOpenChat,
   onOpenHelp,
   onOpenSeeding,
+  onOpenScheme,
 }: Props) {
   const toast = useToast();
   const r = useResponsive();
@@ -75,9 +83,11 @@ export function HomeScreen({
 
   const cardWidth = Math.min(r.contentWidth * 0.82, r.s(330));
   const { data, error, reload } = useApi<HomeData>('/home');
+  const sch = useApi<SchemesData>('/schemes');
 
   if (!data) return <LoadState error={error} onRetry={reload} label="Loading your dashboard…" />;
   const { student, application: app } = data;
+  const schemes = sch.data?.schemes ?? [];
   const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`;
 
   return (
@@ -302,40 +312,48 @@ export function HomeScreen({
             )}
 
             {/* Action needed */}
-            <View style={styles.alert}>
-              <View style={styles.alertIcon}>
-                <Icon name="alert-circle-outline" size={r.s(20)} color={colors.danger} />
-              </View>
-              <View style={styles.alertBody}>
-                <View style={styles.alertTitleRow}>
-                  <Text style={styles.alertTitle}>
-                    Action Needed / <Hi style={styles.alertTitle}>आवश्यक कार्रवाई</Hi>
-                  </Text>
-                  <View style={styles.dueChip}>
-                    <Text style={styles.dueText}>Due 05/10/2026</Text>
-                  </View>
+            {data.alert && (
+              <View style={styles.alert}>
+                <View style={styles.alertIcon}>
+                  <Icon name="alert-circle-outline" size={r.s(20)} color={colors.danger} />
                 </View>
-                <Text style={styles.alertCopy}>Income Certificate re-verification required via DigiLocker.</Text>
+                <View style={styles.alertBody}>
+                  <View style={styles.alertTitleRow}>
+                    <Text style={styles.alertTitle}>
+                      Action Needed / <Hi style={styles.alertTitle}>आवश्यक कार्रवाई</Hi>
+                    </Text>
+                    {data.alert.due && (
+                      <View style={styles.dueChip}>
+                        <Text style={styles.dueText}>Due {data.alert.due}</Text>
+                      </View>
+                    )}
+                  </View>
+                  <Text style={styles.alertCopy}>{data.alert.body}</Text>
+                </View>
+                <Pressable accessibilityRole="button" onPress={data.alert.linkTo === 'wallet' ? onOpenWallet : onOpenSeeding} style={({ pressed }) => [styles.fixBtn, pressed && { opacity: 0.85 }]}>
+                  <Text style={styles.fixText}>Fix Now</Text>
+                  <Icon name="arrow-right" size={r.s(14)} color="#FFFFFF" />
+                </Pressable>
               </View>
-              <Pressable accessibilityRole="button" onPress={onOpenSeeding} style={({ pressed }) => [styles.fixBtn, pressed && { opacity: 0.85 }]}>
-                <Text style={styles.fixText}>Fix Now</Text>
-                <Icon name="arrow-right" size={r.s(14)} color="#FFFFFF" />
-              </Pressable>
-            </View>
+            )}
 
             {/* Deadline */}
-            <Pressable accessibilityRole="button" onPress={onOpenCalendar} style={styles.deadline}>
-              <View style={styles.deadlineIcon}>
-                <Icon name="calendar-check" size={r.s(20)} color={NAVY} />
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.deadlineTitle}>
-                  Top Class Scheme closing in <Text style={{ color: ORANGE }}>6 days</Text>
-                </Text>
-                <Text style={styles.deadlineSub}>Last date for ST fresh applications: 10/10/2026</Text>
-              </View>
-              <Icon name="chevron-right" size={r.s(20)} color={colors.textSecondary} />
-            </Pressable>
+            {data.nextDeadline && (
+              <Pressable accessibilityRole="button" onPress={onOpenCalendar} style={styles.deadline}>
+                <View style={styles.deadlineIcon}>
+                  <Icon name="calendar-check" size={r.s(20)} color={NAVY} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.deadlineTitle}>
+                    {data.nextDeadline.title} in <Text style={{ color: ORANGE }}>{data.nextDeadline.daysLeft} {data.nextDeadline.daysLeft === 1 ? 'day' : 'days'}</Text>
+                  </Text>
+                  <Text style={styles.deadlineSub}>
+                    {data.nextDeadline.subtitle ? `${data.nextDeadline.subtitle} · ` : ''}Last date: {data.nextDeadline.date}
+                  </Text>
+                </View>
+                <Icon name="chevron-right" size={r.s(20)} color={colors.textSecondary} />
+              </Pressable>
+            )}
 
             {/* Eligibility */}
             <View style={styles.sectionHead}>
@@ -343,7 +361,7 @@ export function HomeScreen({
                 <Text style={styles.sectionTitle}>
                   Your Eligibility / <Hi style={styles.sectionTitle}>पात्रता योजनाएं</Hi>
                 </Text>
-                <Text style={styles.sectionSub}>5 Schemes matched to your APAAR profile</Text>
+                <Text style={styles.sectionSub}>{sch.data ? `${sch.data.summary.eligible} eligible · ${sch.data.summary.active} enrolled · ${sch.data.summary.total} schemes` : 'Matching schemes to your APAAR profile…'}</Text>
               </View>
               <Pressable accessibilityRole="button" onPress={onOpenSchemes} hitSlop={10} style={styles.viewAll}>
                 <Text style={styles.viewAllText}>
@@ -364,26 +382,24 @@ export function HomeScreen({
             style={styles.carousel}
           >
             {schemes.map((sc) => (
-              <View key={sc.id} style={[styles.schemeCard, { width: cardWidth }]}>
+              <View key={sc.code} style={[styles.schemeCard, { width: cardWidth }]}>
                 <View style={styles.schemeChips}>
                   <View style={styles.tagChip}>
-                    <Text style={styles.tagText}>{sc.tag}</Text>
+                    <Text style={styles.tagText}>{categoryTag[sc.category] ?? sc.category}</Text>
                   </View>
-                  <View style={[styles.statusChip, sc.tone === 'green' ? styles.chipGreen : styles.chipGold]}>
-                    <Text style={[styles.statusChipText, { color: sc.tone === 'green' ? GREEN : colors.warning }]}>{sc.status}</Text>
+                  <View style={[styles.statusChip, statusChip[sc.status].tone === 'green' ? styles.chipGreen : styles.chipGold, statusChip[sc.status].tone === 'grey' && { backgroundColor: '#F0F2F4', borderColor: '#D5DAE1' }]}>
+                    <Text style={[styles.statusChipText, { color: statusChip[sc.status].tone === 'green' ? GREEN : statusChip[sc.status].tone === 'grey' ? '#5E6B79' : colors.warning }]}>{statusChip[sc.status].label}</Text>
                   </View>
                 </View>
                 <Text style={styles.schemeTitle}>{sc.title}</Text>
-                <Text style={styles.schemeDesc}>{sc.desc}</Text>
+                <Text style={styles.schemeDesc}>{sc.summary ?? ''}</Text>
                 <View style={styles.rule} />
                 <View style={styles.schemeFoot}>
                   <View>
                     <Text style={styles.entLabel}>ENTITLEMENT</Text>
-                    <Text style={styles.entAmount}>
-                      {sc.amount} <Text style={styles.entYr}>/ yr</Text>
-                    </Text>
+                    <Text style={styles.entAmount}>{sc.amountText}</Text>
                   </View>
-                  <Pressable accessibilityRole="button" onPress={onOpenCalendar} style={({ pressed }) => [styles.detailsBtn, pressed && { opacity: 0.85 }]}>
+                  <Pressable accessibilityRole="button" onPress={() => onOpenScheme?.(sc.code)} style={({ pressed }) => [styles.detailsBtn, pressed && { opacity: 0.85 }]}>
                     <Text style={styles.detailsText}>Details</Text>
                     <Icon name="arrow-right" size={r.s(14)} color="#FFFFFF" />
                   </Pressable>

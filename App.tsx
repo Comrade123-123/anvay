@@ -155,6 +155,7 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onOpenChat={() => go('chat')}
             onOpenHelp={() => go('help')}
             onOpenSeeding={() => go('seeding')}
+            onOpenScheme={(code) => openScheme(code, 'scheme')}
           />
         )}
         {route === 'help' && (
