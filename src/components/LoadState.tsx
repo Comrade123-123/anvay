@@ -4,16 +4,18 @@ import { colors } from '../theme/colors';
 import { fontFamily } from '../theme/typography';
 
 // Full-screen placeholder shown while a screen's data loads, or when loading failed (with a retry button).
-export function LoadState({ error, onRetry, label = 'Loading…' }: { error?: string | null; onRetry?: () => void; label?: string }) {
+export function LoadState({ error, onRetry, label = 'Loading…', title = "Couldn't load this screen" }: { error?: string | null; onRetry?: () => void; label?: string; title?: string }) {
   return (
     <View style={styles.root}>
       {error ? (
         <>
-          <Text style={styles.title}>Couldn't load this screen</Text>
+          <Text style={styles.title}>{title}</Text>
           <Text style={styles.msg}>{error}</Text>
-          <Pressable accessibilityRole="button" onPress={onRetry} style={({ pressed }) => [styles.btn, pressed && { opacity: 0.85 }]}>
-            <Text style={styles.btnText}>Try again</Text>
-          </Pressable>
+          {onRetry && (
+            <Pressable accessibilityRole="button" onPress={onRetry} style={({ pressed }) => [styles.btn, pressed && { opacity: 0.85 }]}>
+              <Text style={styles.btnText}>Try again</Text>
+            </Pressable>
+          )}
         </>
       ) : (
         <>

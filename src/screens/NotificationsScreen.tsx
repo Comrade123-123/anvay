@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Svg, { Circle, G, Line, Path, Polygon } from 'react-native-svg';
@@ -7,8 +7,12 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { api } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { NotificationItem, NotificationsData } from '../api/types';
 
-// Screen 14 of ANVAY_ka_kaam.pdf (Notifications). Static mock data only.
+// Screen 14 of ANVAY_ka_kaam.pdf (Notifications). Data comes from /api/notifications; reading one marks it read there.
 // Sizes follow the PDF's drawing data on its 390pt frame: 40pt icon circles with 18-20pt icons, 36pt header
 // button, 30pt filter chips, 7pt unread dots, 358pt cards with 18pt radius.
 // Alignment fixes vs the reference: titles used to be cut off by the time label ("Institute verified your applica"),
@@ -21,7 +25,7 @@ const INK = '#1F2836';
 
 type IconName = React.ComponentProps<typeof Icon>['name'];
 type Category = 'applications' | 'payments' | 'deadlines' | 'ministry';
-type Group = 'Today' | 'Yesterday' | 'This week';
+type Group = 'Today' | 'Yesterday' | 'This week' | 'Earlier';
 
 const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) => (
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
@@ -32,25 +36,42 @@ type Item = {
   group: Group;
   cat: Category;
   icon: IconName;
-  tone: 'green' | 'blue' | 'amber' | 'grey';
+  tone: keyof typeof tones;
   title: string;
   time: string;
   body: string;
-  link?: { label: string; to: 'dbt' | 'schemes' };
+  link?: { label: string; to: string };
   unread: boolean;
 };
 
-const initial: Item[] = [
-  { id: 'n1', group: 'Today', cat: 'payments', icon: 'cash-multiple', tone: 'green', title: '₹9,250 credited', time: '10:12 AM', body: 'Post-Matric instalment credited to SBI ••••4417', link: { label: 'View payment', to: 'dbt' }, unread: true },
-  { id: 'n2', group: 'Today', cat: 'applications', icon: 'check-decagram-outline', tone: 'blue', title: 'Institute verified your application', time: '9:05 AM', body: 'Ranchi University confirmed your enrollment for 2026-27', unread: true },
-  { id: 'n3', group: 'Yesterday', cat: 'deadlines', icon: 'calendar-check', tone: 'amber', title: 'Top Class application closes in 32 days', time: '6:30 PM', body: 'Deadline 31/10/2026. You are eligible.', link: { label: 'Apply now', to: 'schemes' }, unread: true },
-  { id: 'n4', group: 'Yesterday', cat: 'applications', icon: 'cloud-check-outline', tone: 'grey', title: 'Offline draft uploaded', time: '11:20 AM', body: 'Your saved documents were submitted when you came online', unread: false },
-  { id: 'n5', group: 'This week', cat: 'ministry', icon: 'bullhorn-outline', tone: 'blue', title: 'New from Ministry of Tribal Affairs', time: 'Mon', body: 'NFST 2026-27 applications are now open', unread: false },
-  { id: 'n6', group: 'This week', cat: 'applications', icon: 'forum-outline', tone: 'blue', title: 'JAGO replied to your question', time: 'Sun', body: 'Your documents list for Top Class is ready', unread: false },
-];
+// Day boundaries are taken in IST so "Today" matches what the student sees on their phone.
+const IST = 5.5 * 3600 * 1000;
+const dayNo = (ms: number) => Math.floor((ms + IST) / 86400000);
 
-const groupHi: Record<Group, string> = { Today: 'आज', Yesterday: 'कल', 'This week': 'इस सप्ताह' };
-const groups: Group[] = ['Today', 'Yesterday', 'This week'];
+function toItem(n: NotificationItem, now: number): Item {
+  const at = new Date(n.createdAt).getTime();
+  const diff = dayNo(now) - dayNo(at);
+  const ist = new Date(at + IST);
+  const h = ist.getUTCHours();
+  const clock = `${h % 12 || 12}:${String(ist.getUTCMinutes()).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`;
+  const date = `${String(ist.getUTCDate()).padStart(2, '0')}/${String(ist.getUTCMonth() + 1).padStart(2, '0')}`;
+  const group: Group = diff <= 0 ? 'Today' : diff === 1 ? 'Yesterday' : diff < 7 ? 'This week' : 'Earlier';
+  return {
+    id: n.id,
+    group,
+    cat: n.category === 'general' ? 'ministry' : n.category,
+    icon: n.icon as IconName,
+    tone: n.tone in tones ? n.tone : 'blue',
+    title: n.title,
+    time: group === 'Today' || group === 'Yesterday' ? clock : date,
+    body: n.body,
+    link: n.linkLabel && n.linkTo ? { label: n.linkLabel, to: n.linkTo } : undefined,
+    unread: n.unread,
+  };
+}
+
+const groupHi: Record<Group, string> = { Today: 'आज', Yesterday: 'कल', 'This week': 'इस सप्ताह', Earlier: 'पहले' };
+const groups: Group[] = ['Today', 'Yesterday', 'This week', 'Earlier'];
 
 const chips: { key: 'all' | Category; label: string }[] = [
   { key: 'all', label: 'All' },
@@ -65,12 +86,13 @@ const tones = {
   blue: { bg: '#E8EDF6', fg: NAVY },
   amber: { bg: '#FDF6DF', fg: '#896000' },
   grey: { bg: '#F0F2F4', fg: MUTED },
+  red: { bg: '#FDEBEB', fg: '#C62828' },
 };
 
 type Props = {
   onBack?: () => void;
   onTabSelect?: (key: TabKey) => void;
-  onNavigate?: (to: 'dbt' | 'schemes' | 'wallet') => void;
+  onNavigate?: (to: any) => void;
 };
 
 export function NotificationsScreen({ onBack, onTabSelect, onNavigate }: Props) {
@@ -78,15 +100,32 @@ export function NotificationsScreen({ onBack, onTabSelect, onNavigate }: Props) 
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [items, setItems] = useState<Item[]>(initial);
+  const { data, error, reload } = useApi<NotificationsData>('/notifications');
+  const [items, setItems] = useState<Item[] | null>(null);
   const [cat, setCat] = useState<'all' | Category>('all');
 
+  useEffect(() => {
+    if (data) setItems(data.items.map((n) => toItem(n, Date.now())));
+  }, [data]);
+
+  if (!items) return <LoadState error={error} onRetry={reload} label="Loading your notifications…" />;
+
   const unread = items.filter((i) => i.unread).length;
-  const markAllRead = () => setItems((prev) => prev.map((i) => ({ ...i, unread: false })));
-  const markRead = (id: string) => setItems((prev) => prev.map((i) => (i.id === id ? { ...i, unread: false } : i)));
+  // Optimistic: the screen updates at once and the server is told in the background.
+  const markAllRead = () => {
+    setItems((prev) => (prev ?? []).map((i) => ({ ...i, unread: false })));
+    api.post('/notifications/read-all').catch(() => toast('Could not save this. It will show as unread next time.'));
+  };
+  const markRead = (id: string) => {
+    if (!items.find((i) => i.id === id)?.unread) return;
+    setItems((prev) => (prev ?? []).map((i) => (i.id === id ? { ...i, unread: false } : i)));
+    api.post(`/notifications/${id}/read`).catch(() => {});
+  };
 
   const visible = items.filter((i) => cat === 'all' || i.cat === cat);
-  const showAlert = cat === 'all' || cat === 'deadlines';
+  // The priority card shows the newest unread red alert (for example a document that must be re-uploaded).
+  const urgent = items.find((i) => i.tone === 'red' && i.unread);
+  const showAlert = !!urgent && (cat === 'all' || cat === urgent.cat);
 
   return (
     <View style={styles.root}>
@@ -125,24 +164,24 @@ export function NotificationsScreen({ onBack, onTabSelect, onNavigate }: Props) 
 
         <View style={styles.column}>
           {/* Priority alert */}
-          {showAlert && (
+          {showAlert && urgent && (
             <View style={styles.alert}>
               <View style={styles.alertTop}>
                 <View style={styles.alertIcon}>
                   <Icon name="alert" size={r.s(20)} color="#C62828" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.alertTitle}>Income certificate is unclear</Text>
-                  <Text style={styles.alertBody}>Re-upload before 05/10/2026 to avoid delay in your Post-Matric payment.</Text>
+                  <Text style={styles.alertTitle}>{urgent.title}</Text>
+                  <Text style={styles.alertBody}>{urgent.body}</Text>
                 </View>
               </View>
               <View style={styles.alertActions}>
                 <View style={styles.daysPill}>
-                  <Text style={styles.daysText}>5 days left</Text>
+                  <Text style={styles.daysText}>Action needed</Text>
                 </View>
                 <Pressable
                   accessibilityRole="button"
-                  onPress={() => onNavigate?.('wallet')}
+                  onPress={() => { markRead(urgent.id); onNavigate?.('wallet'); }}
                   style={({ pressed }) => [styles.reupload, pressed && { opacity: 0.85 }]}
                 >
                   <Icon name="upload" size={r.s(16)} color="#FFFFFF" />
@@ -206,7 +245,7 @@ export function NotificationsScreen({ onBack, onTabSelect, onNavigate }: Props) 
                           {n.link && (
                             <Pressable
                               accessibilityRole="button"
-                              onPress={() => onNavigate?.(n.link!.to)}
+                              onPress={() => { markRead(n.id); onNavigate?.(n.link!.to); }}
                               hitSlop={6}
                               style={styles.link}
                             >

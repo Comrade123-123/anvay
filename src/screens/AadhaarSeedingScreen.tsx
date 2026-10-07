@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -6,10 +6,15 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { BankMitraIllustration } from '../components/BankMitraIllustration';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { DbtData } from '../api/types';
 
-// Screen 16 of ANVAY_ka_kaam.pdf (Aadhaar seeding help, opened from DBT > "Fix via NPCI"). Static mock data only.
+// Screen 16 of ANVAY_ka_kaam.pdf (Aadhaar seeding help, opened from DBT > "Fix via NPCI"). Status comes from /api/dbt;
+// "Check status again" calls /api/dbt/fix-seeding (simulated NPCI re-check), which re-sends the failed payments.
 // Sizes follow the PDF's drawing data: 36pt header circles, 48pt status badge, 28pt step circles, 40pt place tiles,
-// 22pt status pills, 48pt sticky button. "Check status again" runs a mock re-check (still not seeded).
+// 22pt status pills, 48pt sticky button.
 // Alignment fixes vs the reference: the step descriptions wrapped in a narrow column ("seeding / NPCI / mapper")
 // and now use the full card width; the status pills and Directions links sit in fixed right columns.
 const NAVY = colors.primary;
@@ -40,20 +45,27 @@ export function AadhaarSeedingScreen({ onBack, onOpenHelp }: Props) {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [checking, setChecking] = useState(false);
-  const [checked, setChecked] = useState('28/09/2026');
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { data, error, reload } = useApi<DbtData>('/dbt');
 
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  // Pending means the bank is not seeded, or a payment already failed because of it.
+  const pending = !!data && (!data.bank.seeded || !!data.alert);
 
-  // Mock re-check: no request is made, the answer is always "not seeded".
-  const recheck = () => {
+  const recheck = async () => {
     if (checking) return;
     setChecking(true);
-    timer.current = setTimeout(() => {
+    try {
+      const res = await api.post<{ seeded: boolean; retried: number }>('/dbt/fix-seeding');
+      await reload();
+      toast(res.retried ? `Seeding verified. ${res.retried} failed payment(s) sent again.` : 'Seeding verified. Nothing is pending.');
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not check the status. Please try again.');
+    } finally {
       setChecking(false);
-      setChecked('just now');
-    }, 1300);
+    }
   };
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Checking your bank seeding…" />;
+  const bankLine = `${data.bank.name ?? 'Bank'} ••••${data.bank.last4 ?? '----'}`;
 
   return (
     <View style={styles.root}>
@@ -93,13 +105,13 @@ export function AadhaarSeedingScreen({ onBack, onOpenHelp }: Props) {
           {/* Status card overlapping the header */}
           <View style={styles.status}>
             <View style={styles.statusTop}>
-              <View style={styles.statusBadge}>
-                <Icon name="link-off" size={r.s(24)} color={RED} />
+              <View style={[styles.statusBadge, !pending && { backgroundColor: '#E6F4EB' }]}>
+                <Icon name={pending ? 'link-off' : 'link-variant'} size={r.s(24)} color={pending ? RED : GREEN} />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.statusTitle}>Bank account not Aadhaar{'‑'}seeded</Text>
+                <Text style={[styles.statusTitle, !pending && { color: GREEN }]}>{pending ? 'Bank account not Aadhaar\u2011seeded' : 'Bank account is Aadhaar\u2011seeded'}</Text>
                 <Text style={styles.statusSub}>
-                  Bank of India ••••2210 · Checked via NPCI on{' '}{checked}
+                  {bankLine} · Checked via NPCI just now
                 </Text>
               </View>
             </View>
@@ -112,16 +124,18 @@ export function AadhaarSeedingScreen({ onBack, onOpenHelp }: Props) {
               </View>
             </View>
             <View style={styles.checkRow}>
-              <Icon name="close-circle" size={r.s(17)} color={RED} />
+              <Icon name={pending ? 'close-circle' : 'check-decagram'} size={r.s(17)} color={pending ? RED : GREEN} />
               <Text style={styles.checkText}>Aadhaar seeded with bank</Text>
-              <View style={[styles.pill, { backgroundColor: '#FDEBEB' }]}>
-                <Text style={[styles.pillText, { color: RED }]}>Not Seeded ×</Text>
+              <View style={[styles.pill, { backgroundColor: pending ? '#FDEBEB' : '#E6F4EB' }]}>
+                <Text style={[styles.pillText, { color: pending ? RED : GREEN }]}>{pending ? 'Not Seeded ×' : 'Seeded ✓'}</Text>
               </View>
             </View>
             <View style={styles.notice}>
               <Icon name="information" size={r.s(17)} color={AMBER} />
               <Text style={styles.noticeText}>
-                Without seeding, scholarship payments (DBT) may fail or be rejected by the treasury.
+                {pending
+                  ? 'Without seeding, scholarship payments (DBT) may fail or be rejected by the treasury.'
+                  : 'All set. Your scholarship payments will reach this account.'}
               </Text>
             </View>
           </View>

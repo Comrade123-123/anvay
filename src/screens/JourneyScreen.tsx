@@ -5,6 +5,10 @@ import Svg, { Line } from 'react-native-svg';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { JourneyData, JourneyStep } from '../api/types';
 import { useToast } from '../components/Toast';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 
@@ -23,27 +27,7 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-type Step = {
-  n: number;
-  state: 'done' | 'current' | 'upcoming' | 'final';
-  title: string;
-  hi?: string;
-  badge: string;
-  metaIcon: IconName;
-  meta: string;
-  desc: string;
-  desk?: string;
-  eta?: string;
-};
-
-const steps: Step[] = [
-  { n: 1, state: 'done', title: 'Application Submitted /', hi: 'आवेदन प्रस्तुत', badge: 'VERIFIED', metaIcon: 'account-check-outline', meta: 'Online Portal / DigiLocker e-Sign · 14/08/2026', desc: 'Application auto-filled & submitted successfully via DigiLocker credential link.' },
-  { n: 2, state: 'done', title: 'Auto-Verified via DigiLocker', badge: 'VERIFIED', metaIcon: 'robot-outline', meta: 'Automated API verification (APAAR & State ST Cell) · 14/08/2026', desc: 'Aadhaar, ST Caste Certificate & Income e-verified instantly by APAAR AI.' },
-  { n: 3, state: 'done', title: 'Institute Confirmed /', hi: 'संस्थान सत्यापन', badge: 'CONFIRMED', metaIcon: 'school-outline', meta: 'Institute Nodal Officer (IIT Bombay) · 28/08/2026', desc: 'IIT Bombay Nodal Officer verified bonafide enrolment, attendance & fee ledger.' },
-  { n: 4, state: 'current', title: 'District Review /', hi: 'जिला समीक्षा', badge: 'IN PROGRESS', metaIcon: 'shield-check-outline', meta: 'District Welfare Officer, Ranchi · 22/09/2026', desc: 'Scrutiny of ST welfare quotas & final nodal sign-off for state treasury sanction batch.', desk: 'Desk 04 (Shri V. Markam)', eta: 'ETA ~3 Days' },
-  { n: 5, state: 'upcoming', title: 'State Sanction /', hi: 'राज्य स्वीकृति', badge: 'UPCOMING', metaIcon: 'clock-outline', meta: 'State Tribal Welfare Commissioner, Ranchi · Expected 05/10/2026', desc: 'State Tribal Welfare Department sanction order generation & treasury allocation.' },
-  { n: 6, state: 'final', title: 'PFMS DBT Bank Credit /', hi: 'प्रत्यक्ष लाभ अंतरण', badge: 'FINAL STEP', metaIcon: 'bank-outline', meta: 'PFMS Treasury Nodal Officer · Expected 18/10/2026', desc: '₹18,500 direct credit via RBI-PFMS gateway into validated Aadhaar linked account.' },
-];
+type Step = JourneyStep;
 
 type Props = { onBack?: () => void; onTabSelect?: (key: TabKey) => void; onRaiseGrievance?: () => void; onNotifications?: () => void };
 
@@ -53,10 +37,32 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [copied, setCopied] = useState(false);
+  const [advancing, setAdvancing] = useState(false);
+  const { data, error, reload } = useApi<JourneyData>('/journey');
+  const app = data?.application ?? null;
 
   const copyId = () => {
+    try {
+      Promise.resolve((globalThis as any).navigator?.clipboard?.writeText?.(app?.applicationNo ?? '')).catch(() => {});
+    } catch {}
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  // Demo only: stands in for the officers so the status can be shown changing.
+  const advance = async () => {
+    if (advancing) return;
+    setAdvancing(true);
+    try {
+      const res = await api.post<{ completedStage: number | null; nextStage: number | null; finished: boolean; settledPayments?: number }>('/demo/advance');
+      if (res.completedStage == null) toast(res.settledPayments ? `${res.settledPayments} payment(s) settled.` : 'Everything is already complete.');
+      else toast(res.finished ? 'Final stage complete. Scholarship credited.' : `Stage ${res.completedStage} complete. Now at stage ${res.nextStage}.`);
+      await reload();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not move the application forward.');
+    } finally {
+      setAdvancing(false);
+    }
   };
 
   const nodeSize = r.s(30);
@@ -104,7 +110,7 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
           </View>
         </View>
         <View style={styles.metaRow}>
-          <Icon name={st.metaIcon} size={r.s(16)} color={current ? ORANGE : dim ? colors.textMuted : NAVY} />
+          <Icon name={st.icon as IconName} size={r.s(16)} color={current ? ORANGE : dim ? colors.textMuted : NAVY} />
           <Text style={[styles.metaText, dim && { color: colors.textMuted }, current && { fontFamily: fontFamily.bold }]}>{st.meta}</Text>
         </View>
         <Text style={[styles.stepDesc, dim && { color: colors.textMuted }]}>{st.desc}</Text>
@@ -125,6 +131,16 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
       </>
     );
   };
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading your application status…" />;
+  if (!app)
+    return (
+      <View style={{ flex: 1 }}>
+        <LoadState error="You have no active application yet. Apply for a scheme and you can follow it here." title="Nothing to track yet" />
+        <BottomTabBar active="journey" onSelect={onTabSelect} />
+      </View>
+    );
+  const inr = (n: number | null) => (n == null ? '—' : `₹${n.toLocaleString('en-IN')}`);
 
   return (
     <View style={styles.root}>
@@ -176,7 +192,7 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
                 <Text style={styles.idLabel}>
                   APPLICATION ID / <Hi style={styles.idLabel}>आवेदन संख्या</Hi>
                 </Text>
-                <Text style={styles.idValue}>MOTA/PM/2026/JH/004512</Text>
+                <Text style={styles.idValue}>{app.applicationNo}</Text>
               </View>
               <Pressable accessibilityRole="button" onPress={copyId} style={({ pressed }) => [styles.copyBtn, pressed && { opacity: 0.8 }]}>
                 <Icon name={copied ? 'check' : 'content-copy'} size={r.s(18)} color={copied ? GREEN : NAVY} />
@@ -189,9 +205,9 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
 
             <View style={styles.schemeRow}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.scheme}>Post-Matric Scholarship</Text>
+                <Text style={styles.scheme}>{app.title}</Text>
                 <Text style={styles.beneficiary}>
-                  Beneficiary: <Text style={styles.beneficiaryName}>Ramesh Kumar Munda</Text>
+                  Beneficiary: <Text style={styles.beneficiaryName}>{data.beneficiary}</Text>
                 </Text>
               </View>
               <View style={styles.bankTile}>
@@ -204,10 +220,10 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
             <View style={styles.chips}>
               <View style={[styles.chip, styles.chipGrey]}>
                 <Icon name="calendar-month-outline" size={r.s(17)} color={DARK} />
-                <Text style={[styles.chipText, { color: DARK }]}>AY 2026–27</Text>
+                <Text style={[styles.chipText, { color: DARK }]}>AY {app.academicYear}</Text>
               </View>
               <View style={[styles.chip, styles.chipGreen]}>
-                <Text style={[styles.chipText, { color: GREEN, fontFamily: fontFamily.bold }]}>₹ ₹18,500 DBT</Text>
+                <Text style={[styles.chipText, { color: GREEN, fontFamily: fontFamily.bold }]}>{inr(app.amount)} DBT</Text>
               </View>
               <View style={[styles.chip, styles.chipBlue]}>
                 <Icon name="shield-outline" size={r.s(16)} color={DARK} />
@@ -226,13 +242,13 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
                 Verification Milestones / <Hi style={styles.msTitle}>सत्यापन स्थिति</Hi>
               </Text>
               <View style={styles.stage}>
-                <Text style={styles.stageText}>Stage 4 of 6</Text>
+                <Text style={styles.stageText}>{app.finished ? 'Completed' : `Stage ${app.currentStage} of 6`}</Text>
               </View>
             </View>
             <View style={styles.rule} />
 
-            {steps.map((st, i) => {
-              const last = i === steps.length - 1;
+            {app.steps.map((st, i) => {
+              const last = i === app.steps.length - 1;
               const done = st.state === 'done';
               const current = st.state === 'current';
               return (
@@ -267,10 +283,11 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.expectedTitle}>
-                Expected payment in ~12 days / <Hi style={styles.expectedTitle}>संभावित भुगतान</Hi>
+                {app.finished ? 'Scholarship credited / ' : `Expected payment in ~${app.expected.days} days / `}
+                <Hi style={styles.expectedTitle}>{app.finished ? 'भुगतान हो गया' : 'संभावित भुगतान'}</Hi>
               </Text>
               <Text style={styles.expectedBody}>
-                Disbursement scheduled for 18 Oct 2026 upon Mandla DWO approval and treasury seal.
+                {app.finished ? 'The amount has been credited to your bank account.' : `Disbursement scheduled for ${app.expected.date} upon final approval and treasury seal.`}
               </Text>
             </View>
           </View>
@@ -283,12 +300,13 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.acctLabel}>DESIGNATED DBT ACCOUNT</Text>
-                <Text style={styles.acctValue}>SBI •••• 4417</Text>
+                <Text style={styles.acctValue}>{data.bank.name} •••• {data.bank.last4}</Text>
               </View>
               <View style={styles.seeded}>
                 <Icon name="check-circle-outline" size={r.s(18)} color={GREEN} />
                 <Text style={styles.seededText}>
-                  NPCI Seeded / <Hi style={styles.seededText}>आधार लिंक है</Hi> ✓
+                  {data.bank.seeded ? 'NPCI Seeded / ' : 'Seeding pending / '}
+                  <Hi style={styles.seededText}>{data.bank.seeded ? 'आधार लिंक है' : 'लिंक लंबित'}</Hi>{data.bank.seeded ? ' ✓' : ''}
                 </Text>
               </View>
             </View>
@@ -297,13 +315,13 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
                 <Text style={styles.acctKey}>
                   Beneficiary / <Hi style={styles.acctKey}>लाभार्थी:</Hi>
                 </Text>
-                <Text style={styles.acctVal}>Ramesh Kumar Munda</Text>
+                <Text style={styles.acctVal}>{data.beneficiary}</Text>
               </View>
               <View style={styles.acctLine}>
                 <Text style={styles.acctKey}>Validation Status:</Text>
                 <View style={styles.validRow}>
                   <View style={styles.validDot} />
-                  <Text style={styles.validText}>NPCI Active · PFMS Validated</Text>
+                  <Text style={styles.validText}>{data.bank.seeded ? 'NPCI Active · PFMS Validated' : 'Seeding pending'}</Text>
                 </View>
               </View>
             </View>
@@ -323,6 +341,12 @@ export function JourneyScreen({ onBack, onTabSelect, onRaiseGrievance, onNotific
             <Icon name="flag-outline" size={r.s(20)} color={ORANGE} />
             <Text style={styles.grievanceText}>
               Raise Grievance / CPGRAMS <Hi style={styles.grievanceText}>शिकायत दर्ज करें</Hi>
+            </Text>
+          </Pressable>
+
+          <Pressable accessibilityRole="button" onPress={advance} disabled={advancing} hitSlop={8} style={{ alignSelf: 'center', paddingVertical: r.s(12) }}>
+            <Text style={{ fontFamily: fontFamily.medium, fontSize: r.fs(12), color: colors.textSecondary, textDecorationLine: 'underline' }}>
+              {advancing ? 'Updating…' : 'Demo control: move application to the next stage'}
             </Text>
           </Pressable>
 

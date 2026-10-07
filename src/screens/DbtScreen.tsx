@@ -7,8 +7,12 @@ import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { DbtData, DbtPayment } from '../api/types';
 
-// Screen 7 of ANVAY_ka_kaam.pdf (DBT & Direct Payments), opened from Home > DBT Status. Static mock data only.
+// Screen 7 of ANVAY_ka_kaam.pdf (DBT & Direct Payments), opened from Home > DBT Status. Data comes from /api/dbt.
 // Sizes below are the PDF's real point sizes on its 390pt frame (measured from the drawing data), scaled by
 // the shared responsive helper. Ledger cards use one structure: icon | text column | amount + status column,
 // then a footer row; long titles wrap inside their own column and never push the status chip around.
@@ -25,27 +29,8 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-type Txn = {
-  id: string;
-  icon: IconName;
-  kind: string;
-  title: string;
-  date: string;
-  amount: string;
-  credit: boolean;
-  status: 'credited' | 'processing' | 'failed';
-  ref?: string;
-  note?: { icon: IconName; text: string };
-  error?: { hi: string; en: string; ref: string };
-};
-
-// U+2011 (non-breaking hyphen) keeps "2025-26" together so it never splits across two lines.
-const txns: Txn[] = [
-  { id: 't1', icon: 'school', kind: 'MOTA CENTRAL SECTOR', title: 'Post-Matric Scholarship (AY 2025‑26)', date: 'Date: 18/10/2025 · 14:45 IST', amount: '₹18,500', credit: true, status: 'credited', ref: 'PFMS TXN: 928371048291' },
-  { id: 't2', icon: 'cash-multiple', kind: 'STATE SHARE COMPONENT', title: 'Maintenance Allowance (Installment 2)', date: 'Date: 12/01/2026 · Pending Settlement', amount: '₹9,250', credit: true, status: 'processing', note: { icon: 'timer-sand', text: 'State Treasury Sanctioned · RBI NACH Batch' } },
-  { id: 't3', icon: 'book-open-page-variant', kind: 'DIRECT SCHOLAR GRANT', title: 'Special Book Grant & Equipment', date: 'Date: 04/08/2025', amount: '₹4,500', credit: false, status: 'failed', error: { hi: 'विफल: आधार सीडिंग आवश्यक', en: '(NPCI Mapper Rejection: R02)', ref: 'ERR-REF: MOTA-DBT-9921' } },
-  { id: 't4', icon: 'file-document-edit-outline', kind: 'MOTA CENTRAL SECTOR', title: 'Post-Matric Scholarship (AY 2024‑25)', date: 'Date: 22/10/2024 · 11:20 IST', amount: '₹18,000', credit: true, status: 'credited', ref: 'UTR: RBI-819230193810' },
-];
+const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+const iconFor = (p: DbtPayment): IconName => (/book|equipment/i.test(p.label) ? 'book-open-page-variant' : /maintenance|allowance/i.test(p.label) ? 'cash-multiple' : 'school');
 
 const STATUS = {
   credited: { icon: 'check-circle' as IconName, hi: 'खाते में जमा', en: '(Credited)', color: GREEN, bg: '#E6F4E9', border: '#A8DAB5' },
@@ -61,6 +46,34 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lang, setLang] = useState<'hi' | 'en'>('en');
+  const [fy, setFy] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const { data, error, reload } = useApi<DbtData>(fy ? `/dbt?fy=${fy}` : '/dbt');
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Loading your payments…" />;
+  const bank = `${data.bank.name ?? 'Bank account'} (•••• ${data.bank.last4 ?? '----'})`;
+
+  const nextFy = () => {
+    if (data.fys.length < 2) return toast(`Only FY ${data.fy} has payments in this demo`);
+    setFy(data.fys[(data.fys.indexOf(data.fy) + 1) % data.fys.length]);
+  };
+
+  const reinitiate = async (id: string) => {
+    if (busyId) return;
+    setBusyId(id);
+    try {
+      await api.post(`/payments/${id}/retry`);
+      toast('Re-initiation request sent to PFMS. Payment is processing.');
+      await reload();
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'SEEDING_REQUIRED') {
+        toast('Aadhaar seeding is needed first.');
+        onFixSeeding?.();
+      } else toast(e instanceof ApiError ? e.message : 'Could not re-initiate this payment.');
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   return (
     <View style={styles.root}>
@@ -132,14 +145,14 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                 <Hi style={styles.heroKindHi}>समेकित सहायता राशि</Hi>
               </View>
               <View style={styles.seeded}>
-                <Icon name="check-decagram" size={r.s(12)} color="#6BEB83" />
-                <Text style={styles.seededText}>NPCI Seeded</Text>
+                <Icon name={data.bank.seeded ? 'check-decagram' : 'alert-circle-outline'} size={r.s(12)} color={data.bank.seeded ? '#6BEB83' : '#FFAF70'} />
+                <Text style={styles.seededText}>{data.bank.seeded ? 'NPCI Seeded' : 'Seeding pending'}</Text>
               </View>
             </View>
 
             <View style={styles.heroMid}>
               <View style={styles.heroAmountCol}>
-                <Text style={styles.heroAmount}>₹1,25,000</Text>
+                <Text style={styles.heroAmount}>{inr(data.totalDisbursed)}</Text>
                 <Text style={styles.heroCaption}>
                   Total Grants Disbursed (<Hi style={styles.heroCaption}>समेकित डीबीटी अनुदान</Hi>)
                 </Text>
@@ -156,24 +169,25 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                 <Text style={styles.idLabel}>
                   SCHOLAR ID (<Hi style={styles.idLabel}>छात्र पहचान</Hi>)
                 </Text>
-                <Text style={styles.idValue} numberOfLines={1}>MOTA/PM/2026/JH/004512</Text>
+                <Text style={styles.idValue} numberOfLines={1}>{data.scholarId ?? '—'}</Text>
               </View>
               <View style={styles.idTile}>
                 <Text style={styles.idLabel}>PFMS SCHOLAR ID</Text>
-                <Text style={styles.idValue} numberOfLines={1}>PFMS-JH-2026-8812</Text>
+                <Text style={styles.idValue} numberOfLines={1}>{data.pfmsId ?? '—'}</Text>
               </View>
             </View>
 
             <View style={styles.bankRow}>
               <View style={styles.bankLeft}>
                 <Icon name="wallet-outline" size={r.s(12)} color="#D4E2F6" />
-                <Text style={styles.bankName}>State Bank of India (•••• 4417)</Text>
+                <Text style={styles.bankName}>{bank}</Text>
               </View>
-              <Text style={styles.ifsc}>IFSC: SBIN0001420</Text>
+              <Text style={styles.ifsc}>IFSC: {data.bank.ifsc ?? '—'}</Text>
             </View>
           </View>
 
           {/* Urgent alert: icon column + content column, everything under the title lines up with it */}
+          {data.alert && (
           <View style={styles.alert}>
             <View style={styles.alertIcon}>
               <Icon name="alert" size={r.s(20)} color={RED} />
@@ -188,8 +202,8 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                 </View>
               </View>
               <Text style={styles.alertBody}>
-                Secondary bank account mapping with <Text style={styles.alertBold}>NPCI DBT Mapper</Text> is incomplete.
-                Next installment of Book Grant may be withheld.
+                {data.alert.text}. Failed payments cannot be released until the mapping with{' '}
+                <Text style={styles.alertBold}>NPCI DBT Mapper</Text> is complete.
               </Text>
               <View style={styles.alertActions}>
                 <Pressable accessibilityRole="button" onPress={onFixSeeding} style={({ pressed }) => [styles.fixBtn, pressed && { opacity: 0.85 }]}>
@@ -199,12 +213,13 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                   </Text>
                   <Icon name="open-in-new" size={r.s(14)} color="#FFFFFF" />
                 </Pressable>
-                <Pressable accessibilityRole="button" hitSlop={8} onPress={() => toast('Checking payment status with PFMS (demo)')}>
+                <Pressable accessibilityRole="button" hitSlop={8} onPress={async () => { await reload(); toast('Payment status refreshed from PFMS'); }}>
                   <Text style={styles.checkStatus}>Check{'\n'}Status</Text>
                 </Pressable>
               </View>
             </View>
           </View>
+          )}
 
           {/* Ledger heading */}
           <View style={styles.ledgerHead}>
@@ -214,31 +229,33 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                 <Hi style={styles.ledgerSub}>भुगतान विवरणी</Hi> · Public Financial Management System
               </Text>
             </View>
-            <Pressable accessibilityRole="button" accessibilityLabel="Filter by financial year" onPress={() => toast('Only FY 2025-26 is available in this demo')} style={styles.filter}>
-              <Text style={styles.filterText}>FY 2025{'‑'}26</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="Filter by financial year" onPress={nextFy} style={styles.filter}>
+              <Text style={styles.filterText}>FY {data.fy.replace('-', '\u2011')}</Text>
               <Icon name="tune-variant" size={r.s(14)} color={MUTED} />
             </Pressable>
           </View>
 
           {/* Transactions */}
-          {txns.map((t) => {
+          {data.payments.length === 0 && <Text style={[styles.ledgerSub, { textAlign: 'center', marginVertical: r.s(20) }]}>No payments in this financial year.</Text>}
+          {data.payments.map((t) => {
             const st = STATUS[t.status];
             const failed = t.status === 'failed';
+            const credit = !failed;
             return (
               <View key={t.id} style={[styles.txn, failed && styles.txnFailed]}>
                 <View style={styles.txnTop}>
                   <View style={[styles.txnIcon, failed && styles.txnIconFailed]}>
-                    <Icon name={t.icon} size={r.s(18)} color={failed ? RED : NAVY} />
+                    <Icon name={iconFor(t)} size={r.s(18)} color={failed ? RED : NAVY} />
                   </View>
                   <View style={styles.txnText}>
-                    <Text style={[styles.txnKind, failed && { color: RED }]}>{t.kind}</Text>
-                    <Text style={styles.txnTitle}>{t.title}</Text>
-                    <Text style={styles.txnDate}>{t.date}</Text>
+                    <Text style={[styles.txnKind, failed && { color: RED }]}>{t.source.toUpperCase()}</Text>
+                    <Text style={styles.txnTitle}>{t.label}</Text>
+                    <Text style={styles.txnDate}>Date: {t.date}</Text>
                   </View>
                   <View style={styles.txnRight}>
                     <Text style={[styles.txnAmount, failed && { color: RED }]}>
-                      {t.credit ? '+ ' : ''}
-                      {t.amount}
+                      {credit ? '+ ' : ''}
+                      {inr(t.amount)}
                     </Text>
                     <View style={[styles.statusChip, { backgroundColor: st.bg, borderColor: st.border }]}>
                       <Icon name={st.icon} size={r.s(11)} color={st.color} />
@@ -249,19 +266,19 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                   </View>
                 </View>
 
-                {t.error ? (
+                {failed ? (
                   <View style={styles.errorBox}>
                     <View style={styles.errorRow}>
                       <Icon name="alert-circle-outline" size={r.s(13)} color={RED} />
                       <Text style={styles.errorText}>
-                        <Hi style={styles.errorText}>{t.error.hi}</Hi> {t.error.en}
+                        <Hi style={styles.errorText}>विफल: आधार सीडिंग आवश्यक</Hi> {t.failureReason ? `(${t.failureReason})` : ''}
                       </Text>
                     </View>
                     <View style={styles.errorRule} />
                     <View style={styles.errorFoot}>
-                      <Text style={styles.mono}>{t.error.ref}</Text>
-                      <Pressable accessibilityRole="button" hitSlop={10} onPress={() => toast('Re-initiation request sent to PFMS (demo)')} style={styles.reinit}>
-                        <Text style={styles.reinitText}>Re-Initiate Disbursal</Text>
+                      <Text style={styles.mono}>{t.failureRef ? `ERR-REF: ${t.failureRef}` : ''}</Text>
+                      <Pressable accessibilityRole="button" hitSlop={10} onPress={() => reinitiate(t.id)} style={styles.reinit}>
+                        <Text style={styles.reinitText}>{busyId === t.id ? 'Sending…' : 'Re-Initiate Disbursal'}</Text>
                         <Icon name="chevron-right" size={r.s(14)} color={ORANGE} />
                       </Pressable>
                     </View>
@@ -270,15 +287,15 @@ export function DbtScreen({ onBack, onTabSelect, onFixSeeding, onNotifications }
                   <>
                     <View style={styles.rule} />
                     <View style={styles.txnFoot}>
-                      {t.note ? (
+                      {t.status === 'processing' ? (
                         <View style={styles.noteRow}>
-                          <Icon name={t.note.icon} size={r.s(12)} color="#855B00" />
-                          <Text style={styles.noteText}>{t.note.text}</Text>
+                          <Icon name="timer-sand" size={r.s(12)} color="#855B00" />
+                          <Text style={styles.noteText}>State Treasury Sanctioned · RBI NACH Batch</Text>
                         </View>
                       ) : (
-                        <Text style={[styles.mono, styles.footLeft]}>{t.ref}</Text>
+                        <Text style={[styles.mono, styles.footLeft]}>{t.reference ?? ''}</Text>
                       )}
-                      <Text style={styles.txnBank}>State Bank of India (•••• 4417)</Text>
+                      <Text style={styles.txnBank}>{bank}</Text>
                     </View>
                   </>
                 )}

@@ -104,3 +104,71 @@ export type SubmitResult = {
   switched: boolean;
   scheme: { code: string; title: string; titleHi: string | null };
 };
+
+export type JourneyStep = {
+  n: number;
+  state: 'done' | 'current' | 'upcoming' | 'final';
+  title: string;
+  hi: string | null;
+  badge: string;
+  icon: string;
+  meta: string;
+  desc: string;
+  desk: string | null;
+  eta: string | null;
+};
+
+export type JourneyData = {
+  application: {
+    id: string;
+    applicationNo: string;
+    title: string;
+    titleHi: string | null;
+    amount: number | null;
+    academicYear: string;
+    currentStage: number;
+    finished: boolean;
+    steps: JourneyStep[];
+    expected: { days: number; date: string };
+  } | null;
+  bank: { name: string | null; last4: string | null; seeded: boolean };
+  beneficiary: string;
+};
+
+export type DbtPayment = {
+  id: string;
+  label: string;
+  source: string;
+  amount: number;
+  status: 'credited' | 'processing' | 'failed';
+  date: string;
+  reference: string | null;
+  failureReason: string | null;
+  failureRef: string | null;
+};
+
+export type DbtData = {
+  fy: string;
+  fys: string[];
+  totalDisbursed: number;
+  scholarId: string | null;
+  pfmsId: string | null;
+  bank: { name: string | null; last4: string | null; ifsc: string | null; seeded: boolean };
+  alert: { count: number; text: string } | null;
+  payments: DbtPayment[];
+};
+
+export type NotificationItem = {
+  id: string;
+  category: 'payments' | 'applications' | 'deadlines' | 'general';
+  tone: 'green' | 'blue' | 'amber' | 'red';
+  icon: string;
+  title: string;
+  body: string;
+  linkLabel: string | null;
+  linkTo: string | null;
+  unread: boolean;
+  createdAt: string;
+};
+
+export type NotificationsData = { unread: number; items: NotificationItem[] };
