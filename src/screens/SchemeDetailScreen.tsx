@@ -48,6 +48,7 @@ export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
   if (!d) return <LoadState error={error} onRetry={reload} label="Loading scheme…" />;
   const eligible = d.status === 'eligible';
   const enrolled = d.status === 'enrolled';
+  const notEligible = d.status === 'not_eligible';
   const pct = d.total ? Math.round((d.matched / d.total) * 100) : 0;
   const fetched = d.documents.filter((x) => x.status === 'verified').length;
 
@@ -152,28 +153,28 @@ export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
           </View>
 
           {/* Eligibility */}
-          <View style={styles.eligible}>
+          <View style={[styles.eligible, notEligible && { backgroundColor: '#FBEDED', borderColor: '#E7B8B8' }]}>
             <View style={styles.eligibleHead}>
-              <View style={styles.tick}>
-                <Icon name="check" size={r.s(15)} color="#FFFFFF" />
+              <View style={[styles.tick, notEligible && { backgroundColor: '#C62828' }]}>
+                <Icon name={notEligible ? 'close' : 'check'} size={r.s(15)} color="#FFFFFF" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={styles.eligibleTitle}>
+                <Text style={[styles.eligibleTitle, notEligible && { color: '#8A1C1C' }]}>
                   {enrolled ? 'You are Enrolled / ' : eligible ? 'You are Eligible / ' : 'Not eligible right now / '}
-                  <Hi style={styles.eligibleTitle}>{enrolled ? 'आप नामांकित हैं' : eligible ? 'आप पात्र हैं' : 'अभी पात्र नहीं'}</Hi>
+                  <Hi style={[styles.eligibleTitle, notEligible && { color: '#8A1C1C' }]}>{enrolled ? 'आप नामांकित हैं' : eligible ? 'आप पात्र हैं' : 'अभी पात्र नहीं'}</Hi>
                 </Text>
-                <Text style={styles.eligibleSub}>Automatic Pre-Screening Match ({pct}%)</Text>
+                <Text style={[styles.eligibleSub, notEligible && { color: '#9B3B3B' }]}>Automatic Pre-Screening Match ({pct}%)</Text>
               </View>
               <View style={styles.dlChip}>
                 <Icon name="shield-check" size={r.s(12)} color={GREEN} />
                 <Text style={styles.dlChipText}>DigiLocker</Text>
               </View>
             </View>
-            <View style={styles.eligibleRule} />
+            <View style={[styles.eligibleRule, notEligible && { backgroundColor: '#E9CACA' }]} />
             {d.checks.map((c) => (
               <View key={c.key} style={styles.bulletRow}>
                 <Icon name={c.ok ? 'check-circle' : 'close-circle'} size={r.s(15)} color={c.ok ? GREEN : '#C62828'} />
-                <Text style={styles.bulletText}>{c.label}</Text>
+                <Text style={[styles.bulletText, notEligible && { color: '#5A2A2A' }]}>{c.label}</Text>
               </View>
             ))}
           </View>
