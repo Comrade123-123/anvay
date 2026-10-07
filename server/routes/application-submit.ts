@@ -1,8 +1,8 @@
-import { db } from '../../_lib/supabase';
-import { fail, json } from '../../_lib/http';
-import { studentIdFrom } from '../../_lib/auth';
-import { ddmmyyyy } from '../../_lib/format';
-import { documentChecklist, idFromPath, ownedApplication } from '../../_lib/applications';
+import { db } from '../_lib/supabase';
+import { fail, json } from '../_lib/http';
+import { studentIdFrom } from '../_lib/auth';
+import { ddmmyyyy } from '../_lib/format';
+import { documentChecklist, idFromPath, ownedApplication } from '../_lib/applications';
 
 const STAGES: { no: number; title: string; titleHi: string; detail: string; desk?: string; eta?: string }[] = [
   { no: 1, title: 'Application Submitted', titleHi: 'आवेदन प्रस्तुत', detail: 'Online Portal / DigiLocker e-Sign' },

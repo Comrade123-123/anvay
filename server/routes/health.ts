@@ -1,6 +1,6 @@
-import { hasSupabaseEnv } from './_lib/env';
-import { db } from './_lib/supabase';
-import { json } from './_lib/http';
+import { hasSupabaseEnv } from '../_lib/env';
+import { db } from '../_lib/supabase';
+import { json } from '../_lib/http';
 
 const TABLES = [
   'students', 'schemes', 'applications', 'application_stages', 'documents',

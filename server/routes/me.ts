@@ -1,7 +1,7 @@
-import { db } from './_lib/supabase';
-import { fail, json } from './_lib/http';
-import { studentIdFrom } from './_lib/auth';
-import { toStudent } from './_lib/mappers';
+import { db } from '../_lib/supabase';
+import { fail, json } from '../_lib/http';
+import { studentIdFrom } from '../_lib/auth';
+import { toStudent } from '../_lib/mappers';
 
 // GET /api/me: the signed-in student's profile.
 export async function GET(request: Request) {
