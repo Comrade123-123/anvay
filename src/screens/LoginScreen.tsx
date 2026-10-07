@@ -9,9 +9,10 @@ import { api, ApiError } from '../api/client';
 import { useAuth } from '../state/AuthContext';
 import type { OtpKind, SignInResult } from '../api/types';
 import { OtpInput, OtpInputHandle } from '../components/OtpInput';
+import { SmsPopup } from '../components/SmsPopup';
 
-// Screen 4 of ANVAY_ka_kaam.pdf (login). Layout is fluid (see theme/responsive) and the form
-// behaves like a real one on the client only: no network, the OTP is never actually checked.
+// Screen 4 of ANVAY_ka_kaam.pdf (login). Layout is fluid (see theme/responsive). The OTP is checked by the API; in demo
+// mode it is shown in a phone-style message popup because no real SMS is sent.
 const NAVY = colors.primary;
 const HEADER_NAVY = colors.primaryDark;
 const ORANGE = colors.accent;
@@ -59,6 +60,8 @@ export function LoginScreen({ onBack, onVerified }: Props) {
   const [verified, setVerified] = useState(false);
   const [sending, setSending] = useState(false);
   const [hint, setHint] = useState('');
+  // Demo mode: the OTP is shown in a phone-style message popup instead of arriving by SMS.
+  const [smsPopup, setSmsPopup] = useState<string | null>(null);
   const [otpError, setOtpError] = useState('');
   const { signIn } = useAuth();
 
@@ -91,8 +94,9 @@ export function LoginScreen({ onBack, onVerified }: Props) {
     setSending(true);
     setOtpError('');
     try {
-      const res = await api.post<{ hint?: string }>('/auth/send-otp', identifier());
-      setHint(res.hint ?? '');
+      const res = await api.post<{ hint?: string; demo?: boolean; otp?: string }>('/auth/send-otp', identifier());
+      setHint(res.demo ? '' : (res.hint ?? ''));
+      setSmsPopup(res.demo ? (res.otp ?? /\d{6}/.exec(res.hint ?? '')?.[0] ?? null) : null);
       return true;
     } catch (e) {
       toast(e instanceof ApiError ? e.message : 'Could not send the OTP. Please try again.');
@@ -129,11 +133,13 @@ export function LoginScreen({ onBack, onVerified }: Props) {
     setSeconds(0);
     setOtpError('');
     setHint('');
+    setSmsPopup(null);
   };
   const verify = async () => {
     if (code.length !== OTP_LENGTH || verifying || verified) return;
     setVerifying(true);
     setOtpError('');
+    setSmsPopup(null);
     try {
       const result = await api.post<SignInResult>('/auth/verify-otp', { ...identifier(), code });
       await signIn(result);
@@ -157,6 +163,15 @@ export function LoginScreen({ onBack, onVerified }: Props) {
   return (
     <View style={styles.root}>
       <StatusBar style="light" />
+      <SmsPopup
+        otp={smsPopup}
+        onClose={() => setSmsPopup(null)}
+        onUse={(otp) => {
+          setCode(otp);
+          setSmsPopup(null);
+          otpRef.current?.focus();
+        }}
+      />
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView
           ref={scrollRef}

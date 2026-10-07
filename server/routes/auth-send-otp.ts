@@ -13,7 +13,10 @@ export async function POST(request: Request) {
   const valid = kind === 'mobile' ? /^[6-9]\d{9}$/.test(value) : /^\d{12}$/.test(value);
   if (!valid) return fail(kind === 'mobile' ? 'Enter a valid 10-digit mobile number' : 'Enter a valid 12-digit Aadhaar number', 422);
 
-  if (!smsEnabled()) return json({ sent: true, demo: true, hint: `Demo mode: use OTP ${readEnv().demoOtp}` });
+  if (!smsEnabled()) {
+    const otp = readEnv().demoOtp;
+    return json({ sent: true, demo: true, otp, hint: `Demo mode: use OTP ${otp}` });
+  }
 
   // An OTP to the mobile linked with an Aadhaar number needs UIDAI's own service, which this app is not connected to.
   if (kind === 'aadhaar') return fail('Aadhaar sign-in is not available yet. Please use your mobile number.', 422);
