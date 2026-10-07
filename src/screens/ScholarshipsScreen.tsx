@@ -5,6 +5,7 @@ import Svg, { Circle, Ellipse, Line, Path, Polygon, Rect } from 'react-native-sv
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { useToast } from '../components/Toast';
 import { LoadState } from '../components/LoadState';
 import { useApi } from '../api/useApi';
 import type { SchemeCategory, SchemeItem, SchemesData } from '../api/types';
@@ -79,7 +80,7 @@ type Props = {
   onTabSelect?: (key: TabKey) => void;
   onOpenDirectory?: () => void;
   onDetails?: (code: string) => void;
-  onApply?: (code: string) => void;
+  onApply?: (code: string) => Promise<string | null>;
   onCurrent?: () => void;
   onOpenChat?: () => void;
 };
@@ -89,6 +90,11 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [lang, setLang] = useState<'hi' | 'en'>('en');
+  const toast = useToast();
+  const apply = async (code: string) => {
+    const problem = await onApply?.(code);
+    if (problem) toast(problem);
+  };
   const { data, error, reload } = useApi<SchemesData>('/schemes');
 
   if (!data) return <LoadState error={error} onRetry={reload} label="Loading scholarships…" />;
@@ -265,7 +271,7 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                   </Text>
                   <Icon name="chevron-right" size={r.s(16)} color={NAVY} />
                 </Pressable>
-                <Pressable accessibilityRole="button" onPress={() => onApply?.(best.code)} style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.9 }]}>
+                <Pressable accessibilityRole="button" onPress={() => apply(best.code)} style={({ pressed }) => [styles.applyBtn, pressed && { opacity: 0.9 }]}>
                   <Text style={styles.applyText}>
                     Apply now / <Hi style={styles.applyText}>आवेदन करें</Hi>
                   </Text>
@@ -375,7 +381,7 @@ export function ScholarshipsScreen({ onTabSelect, onOpenDirectory, onDetails, on
                 Single Scheme Norm: Only one scholarship can be availed at a time. Compare entitlements before switching.
               </Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={() => best && onApply?.(best.code)} style={styles.normLink}>
+            <Pressable accessibilityRole="button" onPress={() => best && apply(best.code)} style={styles.normLink}>
               <Text style={styles.normLinkText}>
                 {best && current ? `Compare ${shortName(best.title)} vs ${shortName(current.title)}` : 'Compare schemes'}
               </Text>

@@ -4,6 +4,10 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { ApplicationDraft, SubmitResult } from '../api/types';
 
 // Screen 22 of ANVAY_ka_kaam.pdf (Review & Submit, step 3 of the apply flow). Static mock data only: "verification"
 // results are fixed text and Submit only flips a local "submitted" state.
@@ -39,7 +43,7 @@ const steps = [
   { en: 'Review', hi: 'समीक्षा', done: false },
 ];
 
-type Props = { onBack?: () => void; onSubmitted?: () => void };
+type Props = { applicationId: string; onBack?: () => void; onSubmitted?: (result: SubmitResult) => void };
 
 // Visual only: the surrounding row is the tappable checkbox.
 function Check({ on, size }: { on: boolean; size: number }) {
@@ -62,7 +66,7 @@ function Check({ on, size }: { on: boolean; size: number }) {
   );
 }
 
-export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
+export function ReviewSubmitScreen({ applicationId, onBack, onSubmitted }: Props) {
   const r = useResponsive();
   const styles = useMemo(() => makeStyles(r), [r.width]);
   const insets = useSafeAreaInsets();
@@ -70,21 +74,32 @@ export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
   const [declare, setDeclare] = useState(true);
   const [toast, setToast] = useState('');
   const [submitted, setSubmitted] = useState(false);
-  const ready = agree && declare && !submitted;
+  const { data: draft, error, reload } = useApi<ApplicationDraft>(`/applications/${applicationId}`);
+  const needsSwitchConsent = Boolean(draft?.switchFrom);
+  const ready = (agree || !needsSwitchConsent) && declare && !submitted && Boolean(draft?.ready);
 
   const flash = (m: string) => {
     setToast(m);
     setTimeout(() => setToast(''), 2600);
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!ready) return;
     setSubmitted(true);
-    flash('Application submitted (demo).');
-    setTimeout(() => onSubmitted?.(), 1200);
+    try {
+      const result = await api.post<SubmitResult>(`/applications/${applicationId}/submit`);
+      flash('Application submitted.');
+      setTimeout(() => onSubmitted?.(result), 900);
+    } catch (e) {
+      setSubmitted(false);
+      flash(e instanceof ApiError ? e.message : 'Could not submit your application. Please try again.');
+    }
   };
 
   const s = r.s;
+  if (!draft) return <LoadState error={error} onRetry={reload} label="Preparing your review…" />;
+  const student = draft.student;
+  const shortName = draft.scheme.title.replace(/^National /, '').split(/ (Scholarship|Education)/)[0];
 
   return (
     <View style={styles.root}>
@@ -182,7 +197,7 @@ export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
                   <Text style={styles.checkTitle}>{c.title}</Text>
                   <Text style={styles.checkSrc}>
                     Source: <Text style={{ color: NAVY, fontFamily: fontFamily.medium }}>{c.source}</Text>
-                    {c.note}
+                    {c.title === 'Institute Accreditation' ? ` (${student.institute ?? 'your institute'})` : c.note}
                   </Text>
                 </View>
                 {c.ok ? (
@@ -219,42 +234,43 @@ export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
                 <Hi style={styles.sumHi}>आवेदन सारांश</Hi>
               </View>
               <View style={styles.schemePill}>
-                <Text style={styles.schemePillText}>Top Class ST</Text>
+                <Text style={styles.schemePillText}>{shortName} {student.category}</Text>
               </View>
             </View>
             <View style={styles.ruleStrong} />
 
             <Text style={styles.cap}>TARGET SCHEME</Text>
-            <Text style={styles.value}>Top Class Education Scholarship for ST Students</Text>
+            <Text style={styles.value}>{draft.scheme.title}</Text>
 
             <View style={styles.entitle}>
               <Text style={styles.cap}>ENTITLEMENT AMOUNT</Text>
-              <Text style={styles.amount}>Up to ₹2,00,000 / year</Text>
-              <Text style={styles.amountSub}>Full Tuition Fees + Living Allowance ₹3,000/month</Text>
+              <Text style={styles.amount}>{draft.scheme.amountText}</Text>
+              <Text style={styles.amountSub}>Application No. {draft.applicationNo}</Text>
             </View>
 
             <Text style={[styles.cap, { marginTop: s(16) }]}>DOCUMENTS ATTACHED</Text>
             <View style={styles.docLine}>
               <Icon name="check-circle-outline" size={s(15)} color={GREEN} />
-              <Text style={styles.docTitle}>5 verified documents</Text>
+              <Text style={styles.docTitle}>{draft.documents.filter((d) => d.status === 'verified').length} verified documents</Text>
             </View>
-            <Text style={styles.docSub}>Aadhaar, ST Cert, Income, Marksheet, Admission Letter</Text>
+            <Text style={styles.docSub}>{draft.documents.map((d) => d.name).join(', ')}</Text>
 
             <Text style={[styles.cap, { marginTop: s(16) }]}>DIRECT BENEFIT DISBURSAL BANK (DBT)</Text>
             <View style={styles.bank}>
               <Icon name="bank-outline" size={s(20)} color={NAVY} />
               <View style={{ flex: 1, minWidth: s(110) }}>
-                <Text style={styles.bankName}>State Bank of India</Text>
-                <Text style={styles.bankAcc}>A/C ••••4417</Text>
+                <Text style={styles.bankName}>{student.bank.name}</Text>
+                <Text style={styles.bankAcc}>A/C ••••{student.bank.last4}</Text>
               </View>
               <View style={[styles.badge, { backgroundColor: '#E6F4EB', borderColor: '#C3E8CF' }]}>
-                <Text style={[styles.badgeText, { color: GREEN }]}>Aadhaar seeded</Text>
+                <Text style={[styles.badgeText, { color: GREEN }]}>{student.bank.aadhaarSeeded ? 'Aadhaar seeded' : 'Seeding pending'}</Text>
                 <Icon name="check" size={s(13)} color={GREEN} />
               </View>
             </View>
           </View>
 
           {/* Single-scholarship notice */}
+          {needsSwitchConsent && (
           <View style={styles.notice}>
             <View style={styles.noticeHead}>
               <View style={styles.warnIcon}>
@@ -263,7 +279,7 @@ export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
               <Text style={styles.noticeTitle}>Single-Scholarship Norms Notice</Text>
             </View>
             <Text style={styles.noticeBody}>
-              Submitting will end your current Post-Matric scholarship from next instalment as per Single-Scholarship Norms /{' '}
+              Submitting will end your current scholarship from next instalment as per Single-Scholarship Norms /{' '}
               <Hi>एकल छात्रवृत्ति नियम के अनुसार वर्तमान छात्रवृत्ति अगली किस्त से समाप्त होगी</Hi>
             </Text>
             <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: agree }} onPress={() => setAgree((v) => !v)} style={styles.agreeRow}>
@@ -273,6 +289,7 @@ export function ReviewSubmitScreen({ onBack, onSubmitted }: Props) {
               </Text>
             </Pressable>
           </View>
+          )}
 
           {/* Undertaking */}
           <Pressable accessibilityRole="checkbox" accessibilityState={{ checked: declare }} onPress={() => setDeclare((v) => !v)} style={[styles.card, styles.declare, { marginTop: s(14) }]}>

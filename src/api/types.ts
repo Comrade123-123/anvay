@@ -15,6 +15,7 @@ export type Student = {
   stateHi: string | null;
   institute: string | null;
   course: string | null;
+  incomeAnnual: number | null;
   ekycDone: boolean;
   language: 'en' | 'hi';
   bank: { name: string | null; last4: string | null; ifsc: string | null; aadhaarSeeded: boolean; npciMapped: boolean };
@@ -73,4 +74,33 @@ export type SchemeDetail = SchemeItem & {
   documents: { name: string; status: string }[];
   bank: { name: string | null; last4: string | null; seeded: boolean };
   application: { id: string; status: string; currentStage: number } | null;
+};
+
+export type DocItem = {
+  name: string;
+  kind: string | null;
+  status: 'verified' | 'pending' | 'rejected' | 'missing';
+  problems: string[];
+  source: string | null;
+};
+
+export type ApplicationDraft = {
+  id: string;
+  applicationNo: string;
+  status: string;
+  residency: 'hostel' | 'day' | null;
+  switchFrom: boolean;
+  scheme: { code: string; title: string; titleHi: string | null; amountText: string; amountValue: number | null; deadline: string };
+  student: Student;
+  documents: DocItem[];
+  ready: boolean;
+};
+
+export type SubmitResult = {
+  id: string;
+  applicationNo: string;
+  submittedAt: string;
+  reminderOn: string;
+  switched: boolean;
+  scheme: { code: string; title: string; titleHi: string | null };
 };

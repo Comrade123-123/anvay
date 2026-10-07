@@ -4,6 +4,12 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { useToast } from '../components/Toast';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import { pickFile } from '../api/pickFile';
+import type { ApplicationDraft, DocItem } from '../api/types';
 
 // Screen 13 of ANVAY_ka_kaam.pdf (Apply: Documents, step 2). Static mock data only.
 // Sizes follow the PDF's drawing data on its 390pt frame: 40pt document tiles with 16-20pt icons, 28pt stepper
@@ -24,32 +30,42 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const docs: { icon: IconName; title: string; hi: string; source: string; digilocker?: boolean }[] = [
-  { icon: 'fingerprint', title: 'Aadhaar Card', hi: 'आधार कार्ड', source: 'From wallet' },
-  { icon: 'check-decagram-outline', title: 'ST Certificate', hi: 'अनुसूचित जनजाति प्रमाण पत्र', source: 'From DigiLocker', digilocker: true },
-  { icon: 'cash-multiple', title: 'Income Certificate', hi: 'आय प्रमाण पत्र', source: 'From DigiLocker', digilocker: true },
-  { icon: 'school', title: 'Class 12 Marksheet', hi: 'कक्षा 12 अंकपत्र', source: 'From wallet' },
-];
-
-type Admission = 'failed' | 'scanning' | 'ok';
-type Props = { onBack?: () => void; onContinue?: () => void };
-
-// Remembers the mock "document fixed" state while the student moves Docs > Review > back, so Continue does not lock
-// again. App.tsx calls resetDocsProgress() when a new application starts.
-const saved: { admission: Admission; source: string } = { admission: 'failed', source: 'Camera scan · 0.8 MB' };
-export const resetDocsProgress = () => {
-  saved.admission = 'failed';
-  saved.source = 'Camera scan · 0.8 MB';
+const kindIcon: Record<string, IconName> = {
+  aadhaar: 'fingerprint',
+  st_caste: 'check-decagram-outline',
+  income: 'cash-multiple',
+  marksheet: 'school',
+  admission: 'clipboard-text-outline',
+  bonafide: 'account-school-outline',
+  residence: 'map-marker-outline',
+};
+const kindHi: Record<string, string> = {
+  aadhaar: 'आधार कार्ड',
+  st_caste: 'अनुसूचित जनजाति प्रमाण पत्र',
+  income: 'आय प्रमाण पत्र',
+  marksheet: 'अंकपत्र',
+  admission: 'प्रवेश पत्र',
+  bonafide: 'अध्ययन प्रमाण पत्र',
+  residence: 'मूल निवास प्रमाण पत्र',
+};
+const problemText: Record<string, string> = {
+  blurry: 'Image is blurry — retake in good light',
+  name_mismatch: "Name doesn't match your Aadhaar",
+  expired: 'This document has expired',
+  unreadable: 'The document could not be read',
 };
 
-export function ApplyDocsScreen({ onBack, onContinue }: Props) {
+type Props = { applicationId: string; onBack?: () => void; onContinue?: () => void };
+
+export function ApplyDocsScreen({ applicationId, onBack, onContinue }: Props) {
+  const toast = useToast();
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [admission, setAdmission] = useState<Admission>(saved.admission);
-  const [source, setSource] = useState(saved.source);
+  const [busyKind, setBusyKind] = useState<string | null>(null);
   const [draftSaved, setDraftSaved] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const { data: draft, error, reload } = useApi<ApplicationDraft>(`/applications/${applicationId}`);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
@@ -57,26 +73,53 @@ export function ApplyDocsScreen({ onBack, onContinue }: Props) {
     timers.current.push(setTimeout(fn, ms));
   };
 
-  // Mock re-check: no image is captured or analysed.
-  const fix = (newSource: string) => {
-    if (admission !== 'failed') return;
-    setAdmission('scanning');
-    later(() => {
-      setSource(newSource);
-      setAdmission('ok');
-      saved.admission = 'ok';
-      saved.source = newSource;
-    }, 1400);
+  // Upload a photo / PDF (the server checks it), or pull the document from the DigiLocker wallet.
+  const upload = async (kind: string) => {
+    if (busyKind) return;
+    try {
+      const file = await pickFile();
+      if (!file) return;
+      setBusyKind(kind);
+      const res = await api.post<{ status: string; problems: string[] }>('/documents/upload', {
+        kind,
+        fileName: file.name,
+        contentType: file.type,
+        dataBase64: file.base64,
+      });
+      await reload();
+      if (res.status !== 'verified') toast('The document did not pass the quality check. Please try another photo.');
+    } catch (e) {
+      toast(e instanceof ApiError || e instanceof Error ? e.message : 'Could not upload the document.');
+    } finally {
+      setBusyKind(null);
+    }
+  };
+
+  const fromWallet = async (kind: string) => {
+    if (busyKind) return;
+    setBusyKind(kind);
+    try {
+      await api.post('/documents/from-wallet', { kind });
+      await reload();
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not fetch the document from DigiLocker.');
+    } finally {
+      setBusyKind(null);
+    }
   };
 
   const saveDraft = () => {
+    // Every upload is already saved on the server; this just confirms it to the student.
     setDraftSaved(true);
     later(() => setDraftSaved(false), 1600);
   };
 
-  const ready = 4 + (admission === 'ok' ? 1 : 0);
-  const pct = ready * 20;
-  const allReady = ready === 5;
+  const docs: DocItem[] = draft?.documents ?? [];
+  const ready = docs.filter((d) => d.status === 'verified').length;
+  const total = docs.length;
+  const pct = total ? Math.round((ready / total) * 100) : 0;
+  const allReady = total > 0 && ready === total;
+  const pending = total - ready;
 
   const VerifiedPill = () => (
     <View style={styles.verified}>
@@ -107,6 +150,8 @@ export function ApplyDocsScreen({ onBack, onContinue }: Props) {
       <VerifiedPill />
     </View>
   );
+
+  if (!draft) return <LoadState error={error} onRetry={reload} label="Checking your documents…" />;
 
   return (
     <View style={styles.root}>
@@ -171,21 +216,14 @@ export function ApplyDocsScreen({ onBack, onContinue }: Props) {
 
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
         <View style={styles.column}>
-          {/* Offline banner */}
-          <View style={styles.offline}>
-            <Icon name="cloud-off-outline" size={r.s(16)} color="#64748A" />
-            <Text style={styles.offlineText}>Offline · Saved on phone, will upload when online</Text>
-            <View style={styles.offlineDot} />
-          </View>
-
           {/* Progress */}
           <View style={styles.progress}>
             <View style={styles.progressTop}>
               <Text style={styles.progressText} numberOfLines={2}>
-                <Text style={styles.progressStrong}>{ready} of 5 documents ready</Text>
+                <Text style={styles.progressStrong}>{ready} of {total} documents ready</Text>
                 {!allReady && (
                   <Text>
-                    {'  '}· 1 <Hi style={styles.progressHi}>कार्रवाई आवश्यक</Hi>
+                    {'  '}· {pending} <Hi style={styles.progressHi}>कार्रवाई आवश्यक</Hi>
                   </Text>
                 )}
               </Text>
@@ -197,109 +235,80 @@ export function ApplyDocsScreen({ onBack, onContinue }: Props) {
             </View>
           </View>
 
-          {/* Verified documents */}
-          {docs.map((d) => (
-            <DocRow key={d.title} icon={d.icon} title={d.title} hi={d.hi} src={d.source} blue={d.digilocker} />
-          ))}
-
-          {/* Admission letter: failing card, becomes a normal verified row once fixed */}
-          {admission === 'ok' ? (
-            <DocRow icon="clipboard-text-outline" title="Admission Letter (IIT Kharagpur)" hi="प्रवेश पत्र" src={source} />
-          ) : (
-            <View style={styles.failCard}>
-              <View style={styles.failTop}>
-                <View style={styles.failTile}>
-                  <Icon name="clipboard-text-outline" size={r.s(20)} color={RED} />
-                </View>
-                <View style={styles.docBody}>
-                  <Text style={styles.docTitle}>Admission Letter (IIT Kharagpur)</Text>
-                  <Text style={styles.failMeta}>
-                    <Hi style={styles.docHi}>प्रवेश पत्र</Hi> · {source}
-                  </Text>
-                </View>
-                <View style={styles.actionChip}>
-                  <Icon name="alert-circle-outline" size={r.s(14)} color={RED} />
-                  <Text style={styles.actionChipText}>Action{'\n'}required</Text>
-                </View>
-              </View>
-
-              <View style={styles.failBody}>
-                <View style={styles.failHeadRow}>
-                  <Icon name="alert" size={r.s(20)} color={RED} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.failTitle}>
-                      Quality check failed / <Hi style={styles.failTitle}>गुणवत्ता जाँच विफल</Hi>
+          {/* One row per document the scheme asks for */}
+          {docs.map((d) => {
+            const kind = d.kind ?? '';
+            const icon = kindIcon[kind] ?? 'file-document-outline';
+            const hi = kindHi[kind] ?? '';
+            if (d.status === 'verified') {
+              const src = d.source === 'DigiLocker' ? 'From DigiLocker' : d.source === 'Uploaded by student' ? 'Uploaded' : 'From wallet';
+              return <DocRow key={d.name} icon={icon} title={d.name} hi={hi} src={src} blue={d.source === 'DigiLocker'} />;
+            }
+            const busy = busyKind === kind;
+            const reasons = d.problems.length ? d.problems.map((x) => problemText[x] ?? x) : ['Not in your wallet yet. Upload it or fetch it from DigiLocker.'];
+            return (
+              <View key={d.name} style={styles.failCard}>
+                <View style={styles.failTop}>
+                  <View style={styles.failTile}>
+                    <Icon name={icon} size={r.s(20)} color={RED} />
+                  </View>
+                  <View style={styles.docBody}>
+                    <Text style={styles.docTitle}>{d.name}</Text>
+                    <Text style={styles.failMeta}>
+                      <Hi style={styles.docHi}>{hi}</Hi>
                     </Text>
-                    <Text style={styles.failDesc}>Automated scan detected readability and verification mismatches.</Text>
+                  </View>
+                  <View style={styles.actionChip}>
+                    <Icon name="alert-circle-outline" size={r.s(14)} color={RED} />
+                    <Text style={styles.actionChipText}>Action{'\n'}required</Text>
                   </View>
                 </View>
 
-                <View style={styles.checkRow}>
-                  <View style={styles.preview}>
-                    <View style={styles.previewHead}>
-                      <View style={styles.previewBlock} />
-                      <View style={styles.previewCircle} />
-                    </View>
-                    <View style={[styles.previewLine, { backgroundColor: '#CAD4E1' }]} />
-                    <View style={[styles.previewLine, { backgroundColor: '#FBA5A5', width: '80%' }]} />
-                    <View style={[styles.previewLine, { backgroundColor: '#CAD4E1', width: '58%' }]} />
-                    <View style={[styles.previewLine, { backgroundColor: '#CAD4E1' }]} />
-                    <View style={[styles.previewLine, { backgroundColor: '#F47070', width: '70%' }]} />
-                    <View style={{ flex: 1 }} />
-                    <View style={styles.blurBadge}>
-                      <Text style={styles.blurText}>BLURRED</Text>
+                <View style={styles.failBody}>
+                  <View style={styles.failHeadRow}>
+                    <Icon name="alert" size={r.s(20)} color={RED} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.failTitle}>
+                        {d.status === 'rejected' ? 'Quality check failed / ' : 'Document needed / '}
+                        <Hi style={styles.failTitle}>{d.status === 'rejected' ? 'गुणवत्ता जाँच विफल' : 'दस्तावेज़ आवश्यक'}</Hi>
+                      </Text>
                     </View>
                   </View>
                   <View style={styles.checks}>
-                    <View style={styles.check}>
-                      <Icon name="close-circle-outline" size={r.s(17)} color={RED} />
-                      <Text style={[styles.checkText, { color: RED }]}>Image is blurry — retake in good light</Text>
-                    </View>
-                    <View style={styles.check}>
-                      <Icon name="close-circle-outline" size={r.s(17)} color={RED} />
-                      <Text style={[styles.checkText, { color: RED }]}>
-                        Name doesn't match Aadhaar: <Text style={styles.bold}>'Ramesh Munda'</Text> vs{' '}
-                        <Text style={styles.bold}>'Ramesh Kumar Munda'</Text>
-                      </Text>
-                    </View>
-                    <View style={styles.check}>
-                      <Icon name="check-circle" size={r.s(17)} color={GREEN} />
-                      <Text style={[styles.checkText, { color: GREEN }]}>Document date is valid (12/07/2026)</Text>
-                    </View>
-                    <View style={styles.check}>
-                      <Icon name="check-circle" size={r.s(17)} color={GREEN} />
-                      <Text style={[styles.checkText, { color: GREEN }]}>All 4 corners visible</Text>
-                    </View>
+                    {reasons.map((reason) => (
+                      <View key={reason} style={styles.check}>
+                        <Icon name="close-circle-outline" size={r.s(17)} color={RED} />
+                        <Text style={[styles.checkText, { color: RED }]}>{reason}</Text>
+                      </View>
+                    ))}
+                  </View>
+
+                  <View style={styles.actions}>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Upload ${d.name}`}
+                      disabled={!!busyKind}
+                      onPress={() => upload(kind)}
+                      style={({ pressed }) => [styles.retake, pressed && { opacity: 0.85 }]}
+                    >
+                      {busy ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Icon name="camera-outline" size={r.s(20)} color="#FFFFFF" />}
+                      <Text style={styles.retakeText}>{busy ? 'Checking…' : d.status === 'rejected' ? 'Retake photo' : 'Upload'}</Text>
+                    </Pressable>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel={`Fetch ${d.name} from wallet`}
+                      disabled={!!busyKind}
+                      onPress={() => fromWallet(kind)}
+                      style={({ pressed }) => [styles.wallet, pressed && { opacity: 0.85 }]}
+                    >
+                      <Icon name="wallet-outline" size={r.s(20)} color={NAVY} />
+                      <Text style={styles.walletText}>From wallet</Text>
+                    </Pressable>
                   </View>
                 </View>
-
-                <View style={styles.actions}>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={admission === 'scanning'}
-                    onPress={() => fix('Camera scan · 1.1 MB')}
-                    style={({ pressed }) => [styles.retake, pressed && { opacity: 0.85 }]}
-                  >
-                    {admission === 'scanning' ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
-                    ) : (
-                      <Icon name="camera-outline" size={r.s(20)} color="#FFFFFF" />
-                    )}
-                    <Text style={styles.retakeText}>{admission === 'scanning' ? 'Checking…' : 'Retake photo'}</Text>
-                  </Pressable>
-                  <Pressable
-                    accessibilityRole="button"
-                    disabled={admission === 'scanning'}
-                    onPress={() => fix('From wallet')}
-                    style={({ pressed }) => [styles.wallet, pressed && { opacity: 0.85 }]}
-                  >
-                    <Icon name="wallet-outline" size={r.s(20)} color={NAVY} />
-                    <Text style={styles.walletText}>From wallet</Text>
-                  </Pressable>
-                </View>
               </View>
-            </View>
-          )}
+            );
+          })}
 
           {/* Tip */}
           <View style={styles.tip}>
@@ -318,9 +327,9 @@ export function ApplyDocsScreen({ onBack, onContinue }: Props) {
           <View style={styles.bottomStatus}>
             <View style={[styles.statusDot, allReady && { backgroundColor: GREEN }]} />
             <Text style={[styles.statusText, allReady && { color: GREEN }]}>
-              {allReady ? 'All 5 documents verified / ' : 'Fix 1 document to continue / '}
+              {allReady ? `All ${total} documents verified / ` : `Fix ${pending} document${pending === 1 ? '' : 's'} to continue / `}
               <Hi style={[styles.statusText, allReady && { color: GREEN }]}>
-                {allReady ? 'सभी 5 दस्तावेज़ सत्यापित' : 'आगे बढ़ने के लिए 1 दस्तावेज़ ठीक करें'}
+                {allReady ? `सभी ${total} दस्तावेज़ सत्यापित` : `आगे बढ़ने के लिए ${pending} दस्तावेज़ ठीक करें`}
               </Hi>
             </Text>
           </View>

@@ -4,6 +4,11 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { useToast } from '../components/Toast';
+import { api, ApiError } from '../api/client';
+import { useApi } from '../api/useApi';
+import type { ApplicationDraft } from '../api/types';
 
 // Screen 12 of ANVAY_ka_kaam.pdf (Apply: Top Class Education, step 1 "Details"). Static mock data only.
 // Sizes follow the PDF's drawing data on its 388pt frame: 32pt section tiles with 14-17pt icons, 43pt inputs
@@ -38,32 +43,54 @@ const residency = [
   { key: 'day', en: 'Day scholar', hi: 'डे-स्कॉलर', note: '(No hostel allowance)', verified: 'Day scholar status recorded from institute records' },
 ];
 
-type Props = { onBack?: () => void; onContinue?: () => void };
+type Props = { applicationId: string; onBack?: () => void; onContinue?: () => void };
 
-// Remembers the residency choice while the student moves Form > Docs > Review > back. App.tsx resets it for a new application.
-let savedChoice = 'hostel';
-export const resetApplyForm = () => {
-  savedChoice = 'hostel';
-};
-
-export function ApplyFormScreen({ onBack, onContinue }: Props) {
+export function ApplyFormScreen({ applicationId, onBack, onContinue }: Props) {
+  const toast = useToast();
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [draftSaved, setDraftSaved] = useState(false);
   const [open, setOpen] = useState(false);
-  const [choice, setChoice] = useState<string>(savedChoice);
+  const [choice, setChoice] = useState<string>('hostel');
+  const [busy, setBusy] = useState(false);
+  const { data: draft, error, reload } = useApi<ApplicationDraft>(`/applications/${applicationId}`);
+  useEffect(() => {
+    if (draft?.residency) setChoice(draft.residency);
+  }, [draft]);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
-  const saveDraft = () => {
+  // Saves the residency choice to the draft on the server.
+  const persist = async (): Promise<boolean> => {
+    try {
+      await api.patch(`/applications/${applicationId}`, { residency: choice });
+      return true;
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not save your draft. Please try again.');
+      return false;
+    }
+  };
+
+  const saveDraft = async () => {
+    if (!(await persist())) return;
     setDraftSaved(true);
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => setDraftSaved(false), 1600);
   };
 
+  const goContinue = async () => {
+    if (busy) return;
+    setBusy(true);
+    const ok = await persist();
+    setBusy(false);
+    if (ok) onContinue?.();
+  };
+
   const current = residency.find((o) => o.key === choice)!;
+  const student = draft?.student;
+  const inr = (n: number | null | undefined) => (n == null ? '—' : n.toLocaleString('en-IN'));
 
   // Small building blocks so every field shares one alignment.
   const Chip = ({ text }: { text: string }) => (
@@ -91,6 +118,8 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
       {right}
     </View>
   );
+  if (!draft || !student) return <LoadState error={error} onRetry={reload} label="Preparing your application…" />;
+
   return (
     <View style={styles.root}>
       <StatusBar style="dark" />
@@ -175,21 +204,22 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
             <View style={styles.cardBody}>
               <Label en="Full Name" hi="पूरा नाम" chip="DigiLocker" />
               <View style={styles.input}>
-                <Text style={styles.inputText}>Ramesh Kumar Munda</Text>
+                <Text style={styles.inputText}>{student.name}</Text>
               </View>
 
               <View style={styles.twoCol}>
                 <View style={styles.col}>
                   <Label en="DOB" hi="जन्म तिथि" chip="DigiLocker" compact />
                   <View style={styles.input}>
-                    <Text style={styles.inputTextSm}>14/06/2006</Text>
+                    <Text style={styles.inputTextSm}>{student.dob}</Text>
                   </View>
                 </View>
                 <View style={styles.col}>
                   <Label en="Gender" hi="लिंग" compact />
                   <View style={styles.input}>
                     <Text style={styles.inputTextSm}>
-                      Male / <Hi style={styles.inputTextSm}>पुरुष</Hi>
+                      {student.gender ?? '—'}
+                      {student.gender === 'Male' ? <> / <Hi style={styles.inputTextSm}>पुरुष</Hi></> : student.gender === 'Female' ? <> / <Hi style={styles.inputTextSm}>महिला</Hi></> : null}
                     </Text>
                   </View>
                 </View>
@@ -198,7 +228,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
               <Label en="Social Category" hi="श्रेणी" chip="Caste Cert #JH/ST/2024" />
               <View style={styles.input}>
                 <Text style={[styles.inputTextSm, { flex: 1 }]}>
-                  ST (Munda) / <Hi style={styles.inputTextSm}>अनुसूचित जनजाति</Hi>
+                  {student.category}{student.category === 'ST' ? <> / <Hi style={styles.inputTextSm}>अनुसूचित जनजाति</Hi></> : null}
                 </Text>
                 <Icon name="check-circle" size={r.s(17)} color={GREEN} />
               </View>
@@ -206,7 +236,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
               <Label en="Aadhaar Verification" hi="आधार प्रमाणीकरण" />
               <View style={styles.input}>
                 <Icon name="check-decagram" size={r.s(19)} color={GREEN} />
-                <Text style={styles.mono}>XXXX XXXX 4417</Text>
+                <Text style={styles.mono}>XXXX XXXX {student.bank.last4 ?? '----'}</Text>
                 <View style={{ flex: 1 }} />
                 <View style={styles.authChip}>
                   <Text style={styles.authChipText}>UIDAI Authenticated</Text>
@@ -231,8 +261,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
               <Label en="Recognized Institute" hi="संस्थान" chip="AISHE: U-0570" />
               <View style={[styles.input, styles.inputTall]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.inputText}>Indian Institute of Technology, Kharagpur</Text>
-                  <Text style={styles.inputSub}>Institute of National Importance (INI) · West Bengal</Text>
+                  <Text style={styles.inputText}>{student.institute}</Text>
                 </View>
               </View>
 
@@ -240,7 +269,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
                 <View style={styles.col}>
                   <Label en="Course" hi="पाठ्यक्रम" />
                   <View style={styles.input}>
-                    <Text style={styles.inputTextSm}>B.Tech Civil Eng.</Text>
+                    <Text style={styles.inputTextSm} numberOfLines={2}>{student.course}</Text>
                   </View>
                 </View>
                 <View style={styles.col}>
@@ -278,7 +307,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
               <Label en="Annual Family Income" hi="वार्षिक पारिवारिक आय" chip="e-District JH" />
               <View style={[styles.input, styles.inputCol]}>
                 <View style={styles.incomeRow}>
-                  <Text style={styles.income}>₹ 1,80,000</Text>
+                  <Text style={styles.income}>₹ {inr(student.incomeAnnual)}</Text>
                   <View style={styles.limitChip}>
                     <Text style={styles.limitText}>Within ₹8.00 Lakh Limit</Text>
                   </View>
@@ -290,7 +319,7 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
               <View style={[styles.input, styles.inputCol, { alignItems: 'stretch' }]}>
                 <View style={styles.bankRow}>
                   <Icon name="wallet-outline" size={r.s(18)} color={NAVY} />
-                  <Text style={styles.bankName}>State Bank of India ••••4417</Text>
+                  <Text style={styles.bankName}>{student.bank.name} ••••{student.bank.last4}</Text>
                 </View>
                 <View style={styles.bankRule} />
                 <View style={styles.mapperRow}>
@@ -298,7 +327,8 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
                   <View style={styles.seeded}>
                     <View style={styles.statusDot} />
                     <Text style={styles.seededText}>
-                      Aadhaar seeded ✓ / <Hi style={styles.seededText}>आधार सीडेड</Hi>
+                      {student.bank.aadhaarSeeded && student.bank.npciMapped ? 'Aadhaar seeded ✓ / ' : 'Seeding pending / '}
+                      <Hi style={styles.seededText}>{student.bank.aadhaarSeeded && student.bank.npciMapped ? 'आधार सीडेड' : 'सीडिंग लंबित'}</Hi>
                     </Text>
                   </View>
                 </View>
@@ -342,7 +372,6 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
                       accessibilityRole="menuitem"
                       onPress={() => {
                         setChoice(o.key);
-                        savedChoice = o.key;
                         setOpen(false);
                       }}
                       style={[styles.option, selected && styles.optionSelected]}
@@ -388,8 +417,9 @@ export function ApplyFormScreen({ onBack, onContinue }: Props) {
           </View>
           <Pressable
             accessibilityRole="button"
-            onPress={onContinue}
-            style={({ pressed }) => [styles.continueBtn, pressed && { opacity: 0.9 }]}
+            onPress={goContinue}
+            disabled={busy}
+            style={({ pressed }) => [styles.continueBtn, (pressed || busy) && { opacity: 0.8 }]}
           >
             <Text style={styles.continueText}>
               Continue / <Hi style={styles.continueText}>आगे बढ़ें</Hi>

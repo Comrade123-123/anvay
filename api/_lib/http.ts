@@ -3,5 +3,6 @@ const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store
 
 export const json = (data: unknown, status = 200) => new Response(JSON.stringify({ ok: status < 400, data }), { status, headers });
 
-export const fail = (message: string, status = 400) =>
-  new Response(JSON.stringify({ ok: false, error: message }), { status, headers });
+// `extra` carries machine-readable detail next to the message (for example { code: 'SWITCH_REQUIRED' }).
+export const fail = (message: string, status = 400, extra?: Record<string, unknown>) =>
+  new Response(JSON.stringify({ ok: false, error: message, ...extra }), { status, headers });

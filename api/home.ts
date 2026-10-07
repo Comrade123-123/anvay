@@ -48,15 +48,16 @@ export async function GET(request: Request) {
     if (studentQ.error) throw studentQ.error;
     if (!studentQ.data) return fail('Please sign in', 401);
 
-    const appQ = await db()
+    const appsQ = await db()
       .from('applications')
-      .select('id, application_no, scheme_code, status, current_stage, expected_amount, schemes(title, title_hi)')
+      .select('id, application_no, scheme_code, status, current_stage, expected_amount, form, schemes(title, title_hi)')
       .eq('student_id', id)
       .in('status', ['submitted', 'in_review', 'sanctioned'])
       .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    if (appQ.error) throw appQ.error;
+      .limit(5);
+    if (appsQ.error) throw appsQ.error;
+    // A scholarship the student switched away from is not their active one any more.
+    const appQ = { data: (appsQ.data ?? []).find((a: any) => !a.form?.switchedTo) ?? null };
 
     let application = null;
     if (appQ.data) {

@@ -16,8 +16,12 @@ export const setUnauthorizedHandler = (fn: (() => void) | null) => {
 };
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number) {
+  constructor(message: string, public status: number, public details: Record<string, any> = {}) {
     super(message);
+  }
+  /** machine-readable reason from the server, e.g. 'SWITCH_REQUIRED' */
+  get code(): string | undefined {
+    return this.details.code;
   }
 }
 
@@ -34,7 +38,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   const payload = await res.json().catch(() => null);
   if (res.status === 401 && token && onUnauthorized) onUnauthorized();
-  if (!res.ok || !payload?.ok) throw new ApiError(payload?.error ?? `Something went wrong (${res.status})`, res.status);
+  if (!res.ok || !payload?.ok) throw new ApiError(payload?.error ?? `Something went wrong (${res.status})`, res.status, payload ?? {});
   return payload.data as T;
 }
 

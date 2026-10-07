@@ -14,8 +14,8 @@ import { JourneyScreen } from './src/screens/JourneyScreen';
 import { WalletScreen } from './src/screens/WalletScreen';
 import { SchemesScreen } from './src/screens/SchemesScreen';
 import { SchemeDetailScreen } from './src/screens/SchemeDetailScreen';
-import { ApplyFormScreen, resetApplyForm } from './src/screens/ApplyFormScreen';
-import { ApplyDocsScreen, resetDocsProgress } from './src/screens/ApplyDocsScreen';
+import { ApplyFormScreen } from './src/screens/ApplyFormScreen';
+import { ApplyDocsScreen } from './src/screens/ApplyDocsScreen';
 import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import { SwitchScholarshipScreen } from './src/screens/SwitchScholarshipScreen';
 import { AadhaarSeedingScreen } from './src/screens/AadhaarSeedingScreen';
@@ -29,6 +29,8 @@ import { SubmittedScreen } from './src/screens/SubmittedScreen';
 import { ToastProvider } from './src/components/Toast';
 import { DeviceFrame } from './src/components/DeviceFrame';
 import { AuthProvider, useAuth } from './src/state/AuthContext';
+import { api, ApiError } from './src/api/client';
+import type { SubmitResult } from './src/api/types';
 
 type Route = 'splash' | 'welcome' | 'login' | 'home' | 'profile' | 'dbt' | 'journey' | 'wallet' | 'schemes' | 'scheme' | 'apply' | 'docs' | 'notifications' | 'switch' | 'seeding' | 'offline' | 'scholarships' | 'calendar' | 'chat' | 'help' | 'review' | 'submitted';
 
@@ -55,6 +57,27 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
   const openScheme = (code: string, to: Route) => {
     setSchemeCode(code);
     go(to);
+  };
+  // The draft application the student is filling in, and the receipt shown once it is submitted.
+  const [applicationId, setApplicationId] = useState<string | null>(null);
+  const [submitResult, setSubmitResult] = useState<SubmitResult | null>(null);
+
+  // Starts (or resumes) an application for a scheme. Returns an error message to show, or null when it worked.
+  // If the student already holds another scholarship the server asks for the Single-Scholarship switch first.
+  const startApplication = async (code: string, confirmSwitch = false): Promise<string | null> => {
+    setSchemeCode(code);
+    try {
+      const res = await api.post<{ id: string }>('/applications', { schemeCode: code, confirmSwitch });
+      setApplicationId(res.id);
+      go('apply');
+      return null;
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'SWITCH_REQUIRED') {
+        go('switch');
+        return null;
+      }
+      return e instanceof ApiError ? e.message : 'Could not start your application. Please try again.';
+    }
   };
 
   const go = (to: Route) => {
@@ -166,19 +189,36 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onOpenHelp={() => go('help')}
           />
         )}
-        {route === 'scheme' && <SchemeDetailScreen code={schemeCode} onBack={() => back('schemes')} onApply={() => go('switch')} />}
-        {route === 'switch' && (
-          <SwitchScholarshipScreen onBack={() => back('scheme')} onKeep={() => back('scheme')} onSwitch={() => {
-              resetDocsProgress();
-              resetApplyForm();
-              go('apply');
-            }} />
+        {route === 'scheme' && (
+          <SchemeDetailScreen code={schemeCode} onBack={() => back('schemes')} onApply={() => startApplication(schemeCode)} />
         )}
-        {route === 'apply' && <ApplyFormScreen onBack={() => back('switch')} onContinue={() => go('docs')} />}
-        {route === 'docs' && <ApplyDocsScreen onBack={() => back('apply')} onContinue={() => go('review')} />}
-        {route === 'review' && <ReviewSubmitScreen onBack={() => back('docs')} onSubmitted={() => go('submitted')} />}
-        {route === 'submitted' && (
+        {route === 'switch' && (
+          <SwitchScholarshipScreen
+            code={schemeCode}
+            onBack={() => back('scheme')}
+            onKeep={() => back('scheme')}
+            onSwitch={() => startApplication(schemeCode, true)}
+          />
+        )}
+        {route === 'apply' && applicationId && (
+          <ApplyFormScreen applicationId={applicationId} onBack={() => back('scheme')} onContinue={() => go('docs')} />
+        )}
+        {route === 'docs' && applicationId && (
+          <ApplyDocsScreen applicationId={applicationId} onBack={() => back('apply')} onContinue={() => go('review')} />
+        )}
+        {route === 'review' && applicationId && (
+          <ReviewSubmitScreen
+            applicationId={applicationId}
+            onBack={() => back('docs')}
+            onSubmitted={(result) => {
+              setSubmitResult(result);
+              go('submitted');
+            }}
+          />
+        )}
+        {route === 'submitted' && submitResult && (
           <SubmittedScreen
+            result={submitResult}
             onClose={() => reset('home')}
             onHome={() => reset('home')}
             onTrack={() => reset('journey', ['home'])}
@@ -206,7 +246,7 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onTabSelect={onTabSelect}
             onOpenDirectory={() => go('schemes')}
             onDetails={(code) => openScheme(code, 'scheme')}
-            onApply={(code) => openScheme(code, 'switch')}
+            onApply={(code) => startApplication(code)}
             onCurrent={() => go('journey')}
           />
         )}

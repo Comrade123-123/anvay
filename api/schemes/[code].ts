@@ -2,8 +2,8 @@ import { db } from '../_lib/supabase';
 import { fail, json } from '../_lib/http';
 import { studentIdFrom } from '../_lib/auth';
 import { deadlineInfo, evaluate, statusFor } from '../_lib/eligibility';
-
-const ACTIVE = ['submitted', 'in_review', 'sanctioned', 'credited'];
+import { isActive } from '../_lib/applications';
+import { kindOfName } from '../_lib/docs';
 
 // GET /api/schemes/:code: one scheme, this student's rule-by-rule eligibility, and the documents it needs with the
 // state of each one in the student's wallet.
@@ -20,20 +20,20 @@ export async function GET(request: Request) {
 
     const [studentQ, appQ, docsQ] = await Promise.all([
       db().from('students').select('category, income_annual, course, institute, bank_name, account_last4, aadhaar_seeded, npci_mapped').eq('id', id).maybeSingle(),
-      db().from('applications').select('id, status, current_stage').eq('student_id', id).eq('scheme_code', code).maybeSingle(),
+      db().from('applications').select('id, status, current_stage, form').eq('student_id', id).eq('scheme_code', code).maybeSingle(),
       db().from('documents').select('kind, title, status').eq('student_id', id),
     ]);
     if (studentQ.error || appQ.error || docsQ.error) throw studentQ.error ?? appQ.error ?? docsQ.error;
     if (!studentQ.data) return fail('Please sign in', 401);
 
     const checks = evaluate(studentQ.data, s);
-    const { status, reason } = statusFor(checks, Boolean(appQ.data && ACTIVE.includes((appQ.data as any).status)));
+    const { status, reason } = statusFor(checks, Boolean(appQ.data && isActive(appQ.data as any)));
 
     // Match each required document name against what the student already holds.
     const held = docsQ.data ?? [];
     const documents = (s.documents as string[]).map((name) => {
-      const key = name.toLowerCase().split(' ')[0];
-      const doc = held.find((d: any) => d.title.toLowerCase().includes(key) || String(d.kind).includes(key));
+      const kind = kindOfName(name);
+      const doc = kind ? held.find((d: any) => d.kind === kind) : undefined;
       return { name, status: (doc?.status ?? 'missing') as string };
     });
 

@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import type { SubmitResult } from '../api/types';
 
 // Screen 23 of ANVAY_ka_kaam.pdf (Application submitted confirmation). Static mock data only.
 // Sizes follow the PDF's drawing data: 22pt title, 17pt Hindi subtitle, 14pt body, 15pt monospace application ID,
@@ -22,7 +23,6 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const APP_ID = 'MOTA/TC/2026/JH/007831';
 
 function SuccessArt({ size }: { size: number }) {
   // 130 x 88 design box
@@ -61,9 +61,10 @@ function Pin({ size, color }: { size: number; color: string }) {
   );
 }
 
-type Props = { onClose?: () => void; onTrack?: () => void; onHome?: () => void };
+type Props = { result: SubmitResult; onClose?: () => void; onTrack?: () => void; onHome?: () => void };
 
-export function SubmittedScreen({ onClose, onTrack, onHome }: Props) {
+export function SubmittedScreen({ result, onClose, onTrack, onHome }: Props) {
+  const APP_ID = result.applicationNo;
   const r = useResponsive();
   const styles = useMemo(() => makeStyles(r), [r.width]);
   const insets = useSafeAreaInsets();
@@ -171,8 +172,7 @@ export function SubmittedScreen({ onClose, onTrack, onHome }: Props) {
                 Applied Scheme / <Hi>योजना:</Hi>
               </Text>
               <View style={styles.rowValueWrap}>
-                <Text style={styles.rowValue}>Top Class Education</Text>
-                <Text style={styles.rowValueSub}>for Scheduled Tribe Students</Text>
+                <Text style={styles.rowValue}>{result.scheme.title}</Text>
               </View>
             </View>
             <View style={styles.row}>
@@ -180,7 +180,7 @@ export function SubmittedScreen({ onClose, onTrack, onHome }: Props) {
                 Submitted on / <Hi>जमा तिथि:</Hi>
               </Text>
               <View style={styles.rowValueWrap}>
-                <Text style={styles.rowValue}>29/09/2026, 10:15 AM</Text>
+                <Text style={styles.rowValue}>{result.submittedAt}</Text>
               </View>
             </View>
             <View style={styles.row}>
@@ -209,7 +209,7 @@ export function SubmittedScreen({ onClose, onTrack, onHome }: Props) {
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <Text style={styles.remTitle}>Deadline reminders added to your calendar</Text>
-              <Text style={styles.remBody}>Institutional nodal officer verification alert set for 05 Oct 2026</Text>
+              <Text style={styles.remBody}>Institutional nodal officer verification alert set for {result.reminderOn}</Text>
             </View>
             <Icon name="check-circle" size={s(16)} color={GREEN} />
           </View>
@@ -218,8 +218,8 @@ export function SubmittedScreen({ onClose, onTrack, onHome }: Props) {
           <View style={styles.next}>
             <Icon name="information" size={s(18)} color={GREEN} style={{ marginTop: s(2) }} />
             <Text style={styles.nextText}>
-              <Text style={{ fontFamily: fontFamily.bold, color: GREEN }}>What happens next?</Text> Your application has been routed directly to the Nodal Desk at{' '}
-              <Text style={{ fontFamily: fontFamily.bold }}>IIT Kharagpur</Text> for e-endorsement. No physical visits required.
+              <Text style={{ fontFamily: fontFamily.bold, color: GREEN }}>What happens next?</Text> Your application has been routed directly to your{' '}
+              <Text style={{ fontFamily: fontFamily.bold }}>institute's Nodal Desk</Text> for e-endorsement. No physical visits required.{result.switched ? ' Your earlier scholarship will end from its next instalment.' : ''}
             </Text>
           </View>
         </View>

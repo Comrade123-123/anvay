@@ -7,6 +7,7 @@ import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { useToast } from '../components/Toast';
 import { LoadState } from '../components/LoadState';
 import { useApi } from '../api/useApi';
+import { api, ApiError } from '../api/client';
 import { useAuth } from '../state/AuthContext';
 import type { Student } from '../api/types';
 import { BottomTabBar, TabKey } from '../components/BottomTabBar';
@@ -44,6 +45,7 @@ const settings: {
   { icon: 'headset', title: 'Grievance Redressal (CPGRAMS)', hi: 'शिकायत निवारण', sub: 'Ticket #GRV-2026-118 in review', badge: { text: '1 Open', tone: 'orange' } },
   { icon: 'sync', title: 'Offline Data & Background Sync', hi: 'ऑफ़लाइन डेटा सिंक', sub: '12 cached docs · Last synced today' },
   { icon: 'web', title: 'Language & Accessibility', hi: 'भाषा और सुगमता', sub: 'English / हिन्दी / संथाली / मुंडारी' },
+  { icon: 'restore', title: 'Reset demo data', hi: 'डेमो डेटा रीसेट', sub: 'Start the apply flow again from the beginning' },
 ];
 
 type Props = { onTabSelect?: (key: TabKey) => void; onLogout?: () => void; onOpenOffline?: () => void; onOpenHelp?: () => void; onOpenSeeding?: () => void };
@@ -66,6 +68,15 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
     } catch {}
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  };
+
+  const resetDemo = async () => {
+    try {
+      await api.post('/demo/reset');
+      toast('Demo data reset. You can apply again from the start.');
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : 'Could not reset the demo data.');
+    }
   };
 
   const logout = async () => {
@@ -246,6 +257,7 @@ export function ProfileScreen({ onTabSelect, onLogout, onOpenOffline, onOpenHelp
                   else if (item.title.startsWith('Grievance')) onOpenHelp?.();
                   else if (item.title.startsWith('Bank')) onOpenSeeding?.();
                   else if (item.title.startsWith('Academic')) onTabSelect?.('wallet');
+                  else if (item.title.startsWith('Reset demo')) resetDemo();
                   else toast(`${item.title} is not available in this demo`);
                 }}
                 style={[styles.listRow, i > 0 && styles.listRowBorder]}

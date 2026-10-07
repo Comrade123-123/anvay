@@ -25,6 +25,7 @@ export function toStudent(row: any) {
     stateHi: (row.state_hi ?? null) as string | null,
     institute: (row.institute ?? null) as string | null,
     course: (row.course ?? null) as string | null,
+    incomeAnnual: (row.income_annual ?? null) as number | null,
     ekycDone: Boolean(row.ekyc_done),
     language: row.language as 'en' | 'hi',
     bank: {

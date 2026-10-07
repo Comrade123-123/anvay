@@ -4,6 +4,10 @@ import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
+import { LoadState } from '../components/LoadState';
+import { useToast } from '../components/Toast';
+import { useApi } from '../api/useApi';
+import type { SchemesData } from '../api/types';
 
 // Screen 15 of ANVAY_ka_kaam.pdf (Switch scholarship). Static mock data only.
 // Sizes follow the PDF's drawing data: 32pt compare arrow, 48pt gain badge with a 22pt icon, 16pt row icons,
@@ -31,19 +35,41 @@ const changes: { icon: IconName; label: string; from: string; to?: string; chip?
   { icon: 'autorenew', label: 'Renewal condition', from: 'Pass exam', chip: 'Minimum 60% marks' },
 ];
 
-const next: { title: string; sub: string }[] = [
-  { title: 'Post-Matric continues till the Dec 2026 instalment (₹9,250)', sub: 'No disruption in current financial support' },
-  { title: 'Top Class application gets verified (≈21 days)', sub: 'Handled online by institute & state nodal officer' },
-  { title: 'New scholarship starts from next instalment', sub: 'Higher entitlement credited directly via PFMS' },
+const nextSteps = (current: string, target: string) => [
+  { title: `${current} continues until its next instalment`, sub: 'No disruption in current financial support' },
+  { title: `${target} application gets verified (≈21 days)`, sub: 'Handled online by institute & state nodal officer' },
+  { title: 'New scholarship starts from next instalment', sub: 'Credited directly via PFMS' },
 ];
+const shortName = (title: string) => title.replace(/^National /, '').split(/ (Scholarship|Education)/)[0];
 
-type Props = { onBack?: () => void; onSwitch?: () => void; onKeep?: () => void };
+type Props = { code: string; onBack?: () => void; onSwitch?: () => Promise<string | null>; onKeep?: () => void };
 
-export function SwitchScholarshipScreen({ onBack, onSwitch, onKeep }: Props) {
+export function SwitchScholarshipScreen({ code, onBack, onSwitch, onKeep }: Props) {
+  const toast = useToast();
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [agreed, setAgreed] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const { data, error, reload } = useApi<SchemesData>('/schemes');
+
+  const confirmSwitch = async () => {
+    if (busy || !agreed) return;
+    setBusy(true);
+    const problem = await onSwitch?.();
+    setBusy(false);
+    if (problem) toast(problem);
+  };
+
+  if (!data) return <LoadState error={error} onRetry={reload} label="Comparing your scholarships…" />;
+  const current = data.schemes.find((s) => s.status === 'enrolled');
+  const target = data.schemes.find((s) => s.code === code);
+  if (!target) return <LoadState error="That scheme could not be found." onRetry={reload} />;
+  const curName = current ? shortName(current.title) : 'Your current scholarship';
+  const newName = shortName(target.title);
+  const gain = Math.max(0, (target.amountValue ?? 0) - (current?.amountValue ?? 0));
+  const inr = (n: number) => `₹${n.toLocaleString('en-IN')}`;
+  const next = nextSteps(curName, newName);
 
   return (
     <View style={styles.root}>
@@ -70,16 +96,16 @@ export function SwitchScholarshipScreen({ onBack, onSwitch, onKeep }: Props) {
             <View style={styles.compare}>
               <View style={styles.compareSide}>
                 <Text style={styles.compareLabel}>CURRENT</Text>
-                <Text style={styles.compareName}>Post-Matric</Text>
-                <Text style={styles.compareAmount}>₹18,500/yr</Text>
+                <Text style={styles.compareName}>{curName}</Text>
+                <Text style={styles.compareAmount}>{current?.amountText ?? '—'}</Text>
               </View>
               <View style={styles.compareArrow}>
                 <Icon name="arrow-right" size={r.s(18)} color="#FFFFFF" />
               </View>
               <View style={[styles.compareSide, { alignItems: 'flex-end' }]}>
                 <Text style={[styles.compareLabel, { color: ORANGE, fontFamily: fontFamily.bold }]}>NEW</Text>
-                <Text style={styles.compareName}>Top Class</Text>
-                <Text style={[styles.compareAmount, styles.compareNew]}>₹2,00,000/yr</Text>
+                <Text style={styles.compareName}>{newName}</Text>
+                <Text style={[styles.compareAmount, styles.compareNew]}>{target.amountText}</Text>
               </View>
             </View>
           </View>
@@ -91,9 +117,9 @@ export function SwitchScholarshipScreen({ onBack, onSwitch, onKeep }: Props) {
             <View style={styles.gainBadge}>
               <Icon name="trending-up" size={r.s(24)} color={GREEN} />
             </View>
-            <Text style={styles.gainTitle}>You gain up to ₹1,81,500 per{' '}year</Text>
-            <Hi style={styles.gainHi}>आपको हर साल ₹1,81,500 तक अधिक मिलेगा</Hi>
-            <Text style={styles.gainSub}>Based on your fee at IIT Kharagpur</Text>
+            <Text style={styles.gainTitle}>{gain > 0 ? `You gain up to ${inr(gain)} per year` : 'Compare the two schemes before you switch'}</Text>
+            {gain > 0 && <Hi style={styles.gainHi}>{`आपको हर साल ${inr(gain)} तक अधिक मिलेगा`}</Hi>}
+            <Text style={styles.gainSub}>Based on the scheme's total support amount</Text>
           </View>
 
           {/* What changes */}
@@ -184,7 +210,7 @@ export function SwitchScholarshipScreen({ onBack, onSwitch, onKeep }: Props) {
             accessibilityRole="button"
             accessibilityState={{ disabled: !agreed }}
             disabled={!agreed}
-            onPress={onSwitch}
+            onPress={confirmSwitch}
             style={({ pressed }) => [styles.switchBtn, !agreed && styles.switchOff, pressed && agreed && { opacity: 0.9 }]}
           >
             <Text style={styles.switchText}>

@@ -2,8 +2,7 @@ import { db } from '../_lib/supabase';
 import { fail, json } from '../_lib/http';
 import { studentIdFrom } from '../_lib/auth';
 import { deadlineInfo, evaluate, statusFor } from '../_lib/eligibility';
-
-const ACTIVE = ['submitted', 'in_review', 'sanctioned', 'credited'];
+import { isActive } from '../_lib/applications';
 
 // GET /api/schemes: every scheme with this student's eligibility, plus the counts the Scholarships hub shows.
 export async function GET(request: Request) {
@@ -14,7 +13,7 @@ export async function GET(request: Request) {
     const [studentQ, schemesQ, appsQ] = await Promise.all([
       db().from('students').select('category, income_annual, course, institute').eq('id', id).maybeSingle(),
       db().from('schemes').select('*').order('amount_value', { ascending: false }),
-      db().from('applications').select('id, scheme_code, status, current_stage, expected_amount').eq('student_id', id),
+      db().from('applications').select('id, scheme_code, status, current_stage, expected_amount, form').eq('student_id', id),
     ]);
     if (studentQ.error || schemesQ.error || appsQ.error) throw studentQ.error ?? schemesQ.error ?? appsQ.error;
     const student = studentQ.data;
@@ -24,7 +23,7 @@ export async function GET(request: Request) {
     const items = (schemesQ.data ?? []).map((s: any) => {
       const app = apps.find((a: any) => a.scheme_code === s.code);
       const checks = evaluate(student, s);
-      const { status, reason } = statusFor(checks, Boolean(app && ACTIVE.includes(app.status)));
+      const { status, reason } = statusFor(checks, Boolean(app && isActive(app)));
       return {
         code: s.code,
         title: s.title,

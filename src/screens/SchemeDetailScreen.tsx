@@ -35,7 +35,7 @@ const breakdown: { icon: IconName; title: string; desc: string; foot: string; ch
 ];
 
 
-type Props = { code: string; onBack?: () => void; onApply?: () => void };
+type Props = { code: string; onBack?: () => void; onApply?: () => Promise<string | null> };
 
 export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
   const toast = useToast();
@@ -43,6 +43,14 @@ export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
   const [saved, setSaved] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const applyNow = async () => {
+    if (applying) return;
+    setApplying(true);
+    const problem = await onApply?.();
+    setApplying(false);
+    if (problem) toast(problem);
+  };
   const { data: d, error, reload } = useApi<SchemeDetail>(`/schemes/${encodeURIComponent(code)}`);
 
   if (!d) return <LoadState error={error} onRetry={reload} label="Loading scheme…" />;
@@ -285,7 +293,7 @@ export function SchemeDetailScreen({ code, onBack, onApply }: Props) {
             accessibilityRole="button"
             accessibilityState={{ disabled: !eligible }}
             disabled={!eligible}
-            onPress={onApply}
+            onPress={applyNow}
             style={({ pressed }) => [styles.applyBtn, !eligible && { opacity: 0.55 }, pressed && eligible && { opacity: 0.9 }]}
           >
             <View style={styles.applyText}>
