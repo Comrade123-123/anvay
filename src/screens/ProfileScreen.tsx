@@ -43,7 +43,7 @@ const settings: {
   { icon: 'bank', title: 'Bank & Aadhaar Seeding (DBT)', hi: 'बैंक एवं आधार सीडिंग', sub: 'SBI •••• 4417 (NPCI active)', badge: { text: 'Linked / लिंक है ✓', tone: 'green' } },
   { icon: 'school-outline', title: 'Academic Records & DigiLocker', hi: 'शैक्षणिक रिकॉर्ड', sub: 'Marksheets, bonafide & roll numbers' },
   { icon: 'headset', title: 'Grievance Redressal (CPGRAMS)', hi: 'शिकायत निवारण', sub: 'Ticket #GRV-2026-118 in review', badge: { text: '1 Open', tone: 'orange' } },
-  { icon: 'sync', title: 'Offline Data & Background Sync', hi: 'ऑफ़लाइन डेटा सिंक', sub: '12 cached docs · Last synced today' },
+  { icon: 'sync', title: 'Offline Data & Background Sync', hi: 'ऑफ़लाइन डेटा सिंक', sub: 'Saved screens and uploads waiting' },
   { icon: 'web', title: 'Language & Accessibility', hi: 'भाषा और सुगमता', sub: 'English / हिन्दी / संथाली / मुंडारी' },
   { icon: 'restore', title: 'Reset demo data', hi: 'डेमो डेटा रीसेट', sub: 'Start the apply flow again from the beginning' },
 ];

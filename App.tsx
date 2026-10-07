@@ -28,6 +28,7 @@ import { ReviewSubmitScreen } from './src/screens/ReviewSubmitScreen';
 import { SubmittedScreen } from './src/screens/SubmittedScreen';
 import { ToastProvider } from './src/components/Toast';
 import { DeviceFrame } from './src/components/DeviceFrame';
+import { OfflineBanner } from './src/components/OfflineBanner';
 import { AuthProvider, useAuth } from './src/state/AuthContext';
 import { api, ApiError } from './src/api/client';
 import type { SubmitResult } from './src/api/types';
@@ -140,6 +141,8 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
       <DeviceFrame>
       <ToastProvider>
         <StatusBar style="light" />
+        <OfflineBanner signedIn={!!auth.student} />
+        <View style={{ flex: 1 }}>
         {route === 'splash' && <SplashScreen onFinish={onSplashFinish} />}
         {route === 'welcome' && <WelcomeScreen onGetStarted={goLogin} onLogin={goLogin} />}
         {route === 'login' && <LoginScreen onBack={goWelcome} onVerified={goHome} />}
@@ -262,6 +265,7 @@ function AppShell({ onSignedOutRef }: { onSignedOutRef: React.MutableRefObject<(
             onOpenSeeding={() => go('seeding')}
           />
         )}
+        </View>
       </ToastProvider>
       </DeviceFrame>
     </SafeAreaProvider>

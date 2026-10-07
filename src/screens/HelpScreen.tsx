@@ -8,6 +8,7 @@ import { BottomTabBar, TabKey } from '../components/BottomTabBar';
 import { LoadState } from '../components/LoadState';
 import { api, ApiError } from '../api/client';
 import { useApi } from '../api/useApi';
+import { outbox } from '../api/outbox';
 import { pickFile, type PickedFile } from '../api/pickFile';
 import type { GrievancesData } from '../api/types';
 
@@ -84,19 +85,28 @@ export function HelpScreen({ onBack, onTabSelect, onAskJago, onNotifications }: 
     }
     setError('');
     setSending(true);
+    const payload = {
+      category: chosenCategory,
+      description: desc.trim(),
+      applicationId: chosenApp?.id,
+      attachment: file ? { fileName: file.name, contentType: file.type, dataBase64: file.base64 } : undefined,
+    };
     try {
-      const made = await api.post<{ ticketNo: string }>('/grievances', {
-        category: chosenCategory,
-        description: desc.trim(),
-        applicationId: chosenApp?.id,
-        attachment: file ? { fileName: file.name, contentType: file.type, dataBase64: file.base64 } : undefined,
-      });
+      const made = await api.post<{ ticketNo: string }>('/grievances', payload);
       setDesc('');
       setFile(null);
       await reload();
       flash(`Grievance ${made.ticketNo} submitted. You will get an SMS update.`);
     } catch (e) {
-      setError(e instanceof ApiError || e instanceof Error ? e.message : 'Could not submit. Please try again.');
+      if (e instanceof ApiError && e.status === 0) {
+        // No network: keep it on the phone and send it automatically when the connection returns.
+        const saved = await outbox.add({ kind: 'grievance', title: chosenCategory, sub: file ? 'With 1 attachment' : 'Saved on phone', payload });
+        if (saved) {
+          setDesc('');
+          setFile(null);
+          flash("You're offline. Your grievance is saved on the phone and will be sent automatically.");
+        } else setError('No connection, and there is no space on the phone to save this. Try again when online.');
+      } else setError(e instanceof ApiError || e instanceof Error ? e.message : 'Could not submit. Please try again.');
     } finally {
       setSending(false);
     }

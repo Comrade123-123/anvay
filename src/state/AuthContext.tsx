@@ -1,6 +1,8 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { api, setToken, setUnauthorizedHandler } from '../api/client';
+import { api, ApiError, setToken, setUnauthorizedHandler } from '../api/client';
 import { storage } from '../api/storage';
+import { cache } from '../api/cache';
+import { outbox } from '../api/outbox';
 import type { SignInResult, Student } from '../api/types';
 
 const TOKEN_KEY = 'anvay.token';
@@ -26,6 +28,9 @@ export function AuthProvider({ children, onSignedOut }: { children: React.ReactN
     setToken(null);
     setStudent(null);
     await storage.remove(TOKEN_KEY);
+    // nothing saved for this student stays on the phone after they sign out
+    await cache.clear();
+    await outbox.clear();
   }, []);
 
   // Restore the saved session once, on app start.
@@ -38,8 +43,9 @@ export function AuthProvider({ children, onSignedOut }: { children: React.ReactN
         try {
           const me = await api.get<Student>('/me');
           if (!cancelled) setStudent(me);
-        } catch {
-          await signOut();
+        } catch (e) {
+          // Only a rejected session ends the sign-in; being offline on start must not log the student out.
+          if (e instanceof ApiError && e.status === 401) await signOut();
         }
       }
       if (!cancelled) setReady(true);

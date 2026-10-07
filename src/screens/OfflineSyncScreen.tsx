@@ -5,11 +5,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MaterialCommunityIcons as Icon } from '@expo/vector-icons';
 import { colors, fontFamily, Responsive, useResponsive } from '../theme';
 import { OfflineIllustration } from '../components/OfflineIllustration';
+import { api } from '../api/client';
+import { cache } from '../api/cache';
+import { useOnline } from '../api/connectivity';
+import { outbox, useOutbox } from '../api/outbox';
 
 // Screen 17 of ANVAY_ka_kaam.pdf (Offline & sync, opened from Profile > Offline Data & Background Sync).
-// Static mock data only. Sizes follow the PDF's drawing data: 28pt "Offline" pill, 40pt circular icon tiles,
+// Shows the real connection, what is waiting to upload and what is saved on the phone. Sizes follow the PDF's drawing data: 28pt "Offline" pill, 40pt circular icon tiles,
 // 16pt tick circles, 24pt toggles (44 x 24 track), 52pt sticky sync button.
-// The two toggles are real; "Try syncing now" runs a mock attempt that ends offline, so nothing is uploaded.
+// The two toggles are saved on the phone; "Try syncing now" checks the connection and uploads what is waiting.
 // Alignment fix vs the reference: the sticky sync bar covered the SMS card in the PDF - here it sits below the
 // scroll area and the list ends with room for it.
 const NAVY = colors.primary;
@@ -25,17 +29,14 @@ const Hi = ({ children, style }: { children: React.ReactNode; style?: object }) 
   <Text style={[{ fontFamily: fontFamily.hindiRegular }, style]}>{children}</Text>
 );
 
-const queue: { icon: IconName; title: string; sub: string }[] = [
-  { icon: 'file-document', title: 'Top Class application', sub: 'Draft saved on phone' },
-  { icon: 'image', title: 'Admission letter photo', sub: '2.1 MB · quality check passed' },
+const worksOffline = [
+  'Open screens you have already seen (documents, status, payments)',
+  'See deadlines and reminders',
+  'Write a grievance. It is saved and sent later',
 ];
 
-const worksOffline = [
-  'View your documents (7)',
-  'Check application status (saved)',
-  'Fill and save applications',
-  'Deadlines and reminders',
-];
+const when = (ms: number) =>
+  new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: '2-digit', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(ms));
 
 function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
   const r = useResponsive();
@@ -74,29 +75,60 @@ export function OfflineSyncScreen({ onBack }: Props) {
   const r = useResponsive();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(r), [r.width]); // eslint-disable-line react-hooks/exhaustive-deps
-  const [wifiOnly, setWifiOnly] = useState(false);
-  const [saveOffline, setSaveOffline] = useState(true);
+  const online = useOnline();
+  const { items: queue, lastSynced } = useOutbox();
+  const [wifiOnly, setWifiOnlyState] = useState(false);
+  const [saveOffline, setSaveOfflineState] = useState(true);
+  const [saved, setSaved] = useState(0);
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => () => timers.current.forEach(clearTimeout), []);
+  useEffect(() => {
+    cache.prefs().then((p) => {
+      setWifiOnlyState(p.wifiOnly);
+      setSaveOfflineState(p.saveOffline);
+    });
+    cache.count().then(setSaved);
+  }, []);
 
-  // Mock attempt: there is no network layer, so it always ends offline.
-  const trySync = () => {
+  const setWifiOnly = (v: boolean) => {
+    setWifiOnlyState(v);
+    cache.setPrefs({ wifiOnly: v });
+  };
+  const setSaveOffline = (v: boolean) => {
+    setSaveOfflineState(v);
+    cache.setPrefs({ saveOffline: v }).then(() => cache.count().then(setSaved));
+  };
+
+  // Finds out whether the server can really be reached, then uploads whatever is waiting.
+  const trySync = async () => {
     if (syncing) return;
     setSyncing(true);
     setResult(null);
-    timers.current.push(
-      setTimeout(() => {
-        setSyncing(false);
-        setResult('Still offline · 2 items stay queued and will retry automatically');
-      }, 1500),
-    );
+    try {
+      await api.get('/health', { fresh: true });
+      const res = await outbox.flush(true);
+      if (res.offline) setResult(`Connection lost. ${res.remaining} ${res.remaining === 1 ? 'item stays' : 'items stay'} queued`);
+      else if (res.rejected.length) setResult(`Not accepted: ${res.rejected[0]}`);
+      else {
+        await outbox.markSynced();
+        setResult(res.sent ? `Uploaded ${res.sent} ${res.sent === 1 ? 'item' : 'items'}` : 'Everything is up to date');
+      }
+    } catch {
+      setResult(`Still offline. ${queue.length} ${queue.length === 1 ? 'item stays' : 'items stay'} queued and will retry automatically`);
+    } finally {
+      setSyncing(false);
+      cache.count().then(setSaved);
+    }
   };
 
   const copySms = () => {
+    try {
+      Promise.resolve((globalThis as any).navigator?.clipboard?.writeText?.('ANVAY STATUS 004512')).catch(() => {});
+    } catch {}
     setCopied(true);
     timers.current.push(setTimeout(() => setCopied(false), 1400));
   };
@@ -121,9 +153,9 @@ export function OfflineSyncScreen({ onBack }: Props) {
                 <Text style={styles.title}>Offline & sync</Text>
                 <Hi style={styles.titleHi}>ऑफ़लाइन और सिंक</Hi>
               </View>
-              <View style={styles.offlinePill}>
-                <Icon name="cloud-off-outline" size={r.s(16)} color="#4B5462" />
-                <Text style={styles.offlinePillText}>Offline</Text>
+              <View style={[styles.offlinePill, online && { backgroundColor: '#E6F4E9' }]}>
+                <Icon name={online ? 'cloud-check-outline' : 'cloud-off-outline'} size={r.s(16)} color={online ? GREEN : '#4B5462'} />
+                <Text style={[styles.offlinePillText, online && { color: GREEN }]}>{online ? 'Online' : 'Offline'}</Text>
               </View>
             </View>
           </View>
@@ -136,15 +168,18 @@ export function OfflineSyncScreen({ onBack }: Props) {
               <OfflineIllustration />
             </View>
             <Text style={styles.heroTitle}>
-              You're offline / <Hi style={styles.heroTitleHi}>आप ऑफ़लाइन हैं</Hi>
+              {online ? "You're online / " : "You're offline / "}
+              <Hi style={styles.heroTitleHi}>{online ? 'आप ऑनलाइन हैं' : 'आप ऑफ़लाइन हैं'}</Hi>
             </Text>
             <Text style={styles.heroBody}>
-              Don't worry — ANVAY keeps working. Your changes will upload automatically when the network returns.
+              {online
+                ? 'Everything is connected. Anything you saved while offline is uploaded automatically.'
+                : "Don't worry, ANVAY keeps working. What you have already opened stays available and your changes upload when the network returns."}
             </Text>
             <View style={styles.heroRule} />
             <View style={styles.synced}>
               <Icon name="clock" size={r.s(14)} color={NAVY} />
-              <Text style={styles.syncedText}>Last synced 28/09/2026, 8:40 PM</Text>
+              <Text style={styles.syncedText}>{lastSynced ? `Last synced ${when(lastSynced)}` : 'Not synced from this phone yet'}</Text>
             </View>
           </View>
 
@@ -153,14 +188,25 @@ export function OfflineSyncScreen({ onBack }: Props) {
             Waiting to upload <Hi style={styles.sectionHi}>अपलोड बाकी</Hi>
           </Text>
           <View style={styles.card}>
-            {queue.map((q, i) => (
-              <View key={q.title} style={[styles.qRow, i > 0 && styles.qBorder]}>
+            {queue.length === 0 && (
+              <View style={styles.qRow}>
                 <View style={styles.qTile}>
-                  <Icon name={q.icon} size={r.s(20)} color={NAVY} />
+                  <Icon name="check-all" size={r.s(20)} color={GREEN} />
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.qTitle}>{q.title}</Text>
-                  <Text style={styles.qSub}>{q.sub}</Text>
+                  <Text style={styles.qTitle}>Nothing waiting</Text>
+                  <Text style={styles.qSub}>Everything you did has reached the server</Text>
+                </View>
+              </View>
+            )}
+            {queue.map((q, i) => (
+              <View key={q.id} style={[styles.qRow, i > 0 && styles.qBorder]}>
+                <View style={styles.qTile}>
+                  <Icon name="forum-outline" size={r.s(20)} color={NAVY} />
+                </View>
+                <View style={{ flex: 1, minWidth: 0 }}>
+                  <Text style={styles.qTitle}>Grievance: {q.title}</Text>
+                  <Text style={styles.qSub}>{q.sub} · {when(q.createdAt)}</Text>
                 </View>
                 <View style={styles.queued}>
                   <Text style={styles.queuedText}>Queued</Text>
@@ -169,7 +215,7 @@ export function OfflineSyncScreen({ onBack }: Props) {
             ))}
             <View style={styles.qFoot}>
               <Icon name="sync" size={r.s(14)} color={NAVY} />
-              <Text style={styles.qFootText}>2 items · will upload automatically</Text>
+              <Text style={styles.qFootText}>{queue.length} {queue.length === 1 ? 'item' : 'items'} · will upload automatically</Text>
             </View>
           </View>
 
@@ -222,13 +268,13 @@ export function OfflineSyncScreen({ onBack }: Props) {
             <View style={[styles.setRow, styles.setBorder]}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.setTitle}>Save documents on phone for offline use</Text>
-                <Text style={styles.setSub}>{saveOffline ? 'Using 18 MB' : 'Documents load only when online'}</Text>
+                <Text style={styles.setSub}>{saveOffline ? `${saved} ${saved === 1 ? 'screen' : 'screens'} saved on this phone` : 'Screens load only when online'}</Text>
               </View>
               <Toggle value={saveOffline} onChange={setSaveOffline} label="Save documents on phone for offline use" />
             </View>
           </View>
 
-          <Text style={styles.footer}>Digital India · Local SQLite Storage · Ministry of Tribal Affairs</Text>
+          <Text style={styles.footer}>Digital India · Saved on this phone · Ministry of Tribal Affairs</Text>
         </View>
       </ScrollView>
 
