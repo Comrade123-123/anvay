@@ -31,7 +31,7 @@ const T = {
 
 const inr = (n: number | null | undefined) => (n == null ? '' : `₹${Number(n).toLocaleString('en-IN')}`);
 
-async function activeApplication(studentId: string) {
+export async function activeApplication(studentId: string) {
   const { data, error } = await db()
     .from('applications')
     .select('id, application_no, scheme_code, status, current_stage, expected_amount, form, schemes(title, title_hi)')
@@ -89,7 +89,7 @@ function mentionedScheme(message: string, schemes: any[]) {
   return bestScore > 0 && !tie ? best : null;
 }
 
-async function loadSchemes() {
+export async function loadSchemes() {
   const { data, error } = await db().from('schemes').select('code, title, title_hi, rules, documents, deadline').order('code');
   if (error) throw error;
   return (data ?? []) as any[];

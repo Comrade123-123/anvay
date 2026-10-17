@@ -2,7 +2,8 @@ import { db } from '../_lib/supabase';
 import { fail, json } from '../_lib/http';
 import { studentIdFrom } from '../_lib/auth';
 import { clockIst } from '../_lib/today';
-import { hasDevanagari, jagoReply, type Lang } from '../_lib/jago';
+import { hasDevanagari, jagoReply, type Lang, type Reply } from '../_lib/jago';
+import { MAX_AI_QUESTIONS_PER_HOUR, aiEnabled, aiReply, type ChatTurn } from '../_lib/jago-ai';
 
 const shape = (m: any) => {
   let card: unknown = null;
@@ -42,15 +43,40 @@ export async function POST(request: Request) {
     const asked = await db().from('chat_messages').insert({ student_id: id, role: 'user', kind: 'text', body: message }).select('*').single();
     if (asked.error) throw asked.error;
 
-    const reply = await jagoReply(id, message, lang);
-    const answered = await db()
-      .from('chat_messages')
-      .insert({ student_id: id, role: 'bot', kind: reply.kind, body: reply.kind === 'text' ? reply.text : JSON.stringify(reply.card), created_at: new Date(Date.now() + 1).toISOString() })
-      .select('*')
-      .single();
-    if (answered.error) throw answered.error;
+    // The keyword rules always run: they build the status / documents cards, and they answer alone when the AI is off.
+    const rule = await jagoReply(id, message, lang);
+    const cardKind = rule.kind === 'text' ? null : rule.kind;
+    const toRow = (r: Reply) => ({ kind: r.kind, body: r.kind === 'text' ? r.text : JSON.stringify(r.card) });
+    let answers: { kind: string; body: string }[] = [toRow(rule)];
 
-    return json({ messages: [shape(asked.data), shape(answered.data)] });
+    if (aiEnabled()) {
+      const hourAgo = new Date(Date.now() - 3_600_000).toISOString();
+      const [recent, past] = await Promise.all([
+        db().from('chat_messages').select('id', { count: 'exact', head: true }).eq('student_id', id).eq('role', 'user').gte('created_at', hourAgo),
+        db().from('chat_messages').select('role, kind, body').eq('student_id', id).neq('id', asked.data.id).order('created_at', { ascending: false }).limit(8),
+      ]);
+      if ((recent.count ?? 0) <= MAX_AI_QUESTIONS_PER_HOUR && !past.error) {
+        const history: ChatTurn[] = ((past.data ?? []) as any[]).reverse().map((m) => ({
+          role: m.role,
+          text: m.kind === 'text' ? String(m.body ?? '') : m.kind === 'status' ? '[showed the application status card]' : '[showed the documents checklist card]',
+        }));
+        const text = await aiReply({ studentId: id, question: message, lang, history, card: cardKind });
+        if (text) answers = [{ kind: 'text', body: text }, ...(cardKind ? [toRow(rule)] : [])];
+      }
+    }
+
+    const saved: any[] = [];
+    for (let i = 0; i < answers.length; i++) {
+      const a = await db()
+        .from('chat_messages')
+        .insert({ student_id: id, role: 'bot', ...answers[i], created_at: new Date(Date.now() + 1 + i).toISOString() })
+        .select('*')
+        .single();
+      if (a.error) throw a.error;
+      saved.push(a.data);
+    }
+
+    return json({ messages: [shape(asked.data), ...saved.map(shape)] });
   } catch {
     return fail('JAGO could not answer right now. Please try again.', 500);
   }

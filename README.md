@@ -21,7 +21,7 @@ English) and works on phones, tablets and the web from one codebase.
 | --- | --- |
 | Sign-in session (signed token), profile, schemes and the eligibility rules; SMS OTP when an SMS provider is configured (see below) | In demo mode the OTP is the fixed `DEMO_OTP`; a number with no student record signs in as the demo student |
 | Applications, stages, documents (files in private storage), payments, notifications | Document verification (a file name containing "blur" or "mismatch" is rejected) |
-| Grievances with tickets and ratings, calendar, JAGO chat (keyword rules over the student's own records) | DigiLocker refresh, NPCI Aadhaar seeding, PFMS payment retry |
+| Grievances with tickets and ratings, calendar, JAGO chat (answers from the student's own records: a Claude model when `ANTHROPIC_API_KEY` is set, keyword rules otherwise) | DigiLocker refresh, NPCI Aadhaar seeding, PFMS payment retry |
 | Offline: saved screens, grievance outbox that uploads when back online | The "move to next stage" control on Journey (stands in for the officers); the SMS number |
 
 ## Project layout
@@ -73,6 +73,15 @@ Without the settings below the app stays in demo mode (fixed OTP, no SMS). To te
 Rules: the OTP is 6 digits, valid 5 minutes, 5 wrong tries per code, 30 seconds between codes, 5 codes per hour per
 number. Only a keyed hash is stored. Aadhaar-number sign-in is refused in this mode (it needs UIDAI's own service).
 Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/otp.test.mts`.
+
+## AI answers for JAGO (optional)
+
+Set `ANTHROPIC_API_KEY` in Vercel (Production) and redeploy. JAGO then answers free-form questions (Hindi, English or
+Hinglish) with a Claude model (`claude-opus-5-5`, low effort) that is shown only the signed-in student's own records:
+profile, application and stages, payments, documents, dates, grievances and scheme eligibility. The status and
+documents cards are still built by the app. Without the key, or if the model errors or declines, the keyword rules
+answer instead, so chat never breaks. Each student can send 40 AI questions per hour; each question is 500 characters at most.
+Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/jago-ai.test.mts`.
 
 ## Demo notes
 
