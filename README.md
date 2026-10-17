@@ -92,6 +92,13 @@ Google and can change; on the free tier, Google may use the prompts to improve i
 data with it in production.
 Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/jago-ai.test.mts`.
 
+## Keeping the free database awake
+
+A free Supabase project is paused after about a week without activity, and every screen then fails. `vercel.json`
+has a daily cron (02:30 UTC) that calls `/api/health`, which queries every table, so the project always counts as
+active. It shows under the Vercel project's Settings > Cron Jobs. If the project is ever paused anyway, use "Restore
+project" in the Supabase dashboard; the data is kept.
+
 ## Demo notes
 
 - Profile > "Reset demo data" puts the demo student back to the seed state (application at stage 4, one failed

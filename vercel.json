@@ -3,6 +3,12 @@
   "outputDirectory": "dist",
   "framework": null,
   "cleanUrls": true,
+  "crons": [
+    {
+      "path": "/api/health",
+      "schedule": "30 2 * * *"
+    }
+  ],
   "functions": {
     "api/router.ts": {
       "maxDuration": 60
