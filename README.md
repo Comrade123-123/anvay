@@ -21,7 +21,7 @@ English) and works on phones, tablets and the web from one codebase.
 | --- | --- |
 | Sign-in session (signed token), profile, schemes and the eligibility rules; SMS OTP when an SMS provider is configured (see below) | In demo mode the OTP is the fixed `DEMO_OTP`; a number with no student record signs in as the demo student |
 | Applications, stages, documents (files in private storage), payments, notifications | Document verification (a file name containing "blur" or "mismatch" is rejected) |
-| Grievances with tickets and ratings, calendar, JAGO chat (answers from the student's own records: a Claude model when `ANTHROPIC_API_KEY` is set, keyword rules otherwise) | DigiLocker refresh, NPCI Aadhaar seeding, PFMS payment retry |
+| Grievances with tickets and ratings, calendar, JAGO chat (answers from the student's own records: a language model when `GEMINI_API_KEY` (free) or `ANTHROPIC_API_KEY` is set, keyword rules otherwise) | DigiLocker refresh, NPCI Aadhaar seeding, PFMS payment retry |
 | Offline: saved screens, grievance outbox that uploads when back online | The "move to next stage" control on Journey (stands in for the officers); the SMS number |
 
 ## Project layout
@@ -74,13 +74,22 @@ Rules: the OTP is 6 digits, valid 5 minutes, 5 wrong tries per code, 30 seconds 
 number. Only a keyed hash is stored. Aadhaar-number sign-in is refused in this mode (it needs UIDAI's own service).
 Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/otp.test.mts`.
 
-## AI answers for JAGO (optional)
+## AI answers for JAGO (optional, free option available)
 
-Set `ANTHROPIC_API_KEY` in Vercel (Production) and redeploy. JAGO then answers free-form questions (Hindi, English or
-Hinglish) with a Claude model (`claude-opus-5-5`, low effort) that is shown only the signed-in student's own records:
-profile, application and stages, payments, documents, dates, grievances and scheme eligibility. The status and
-documents cards are still built by the app. Without the key, or if the model errors or declines, the keyword rules
-answer instead, so chat never breaks. Each student can send 40 AI questions per hour; each question is 500 characters at most.
+JAGO answers free-form questions (Hindi, English or Hinglish) with a language model that is shown only the signed-in
+student's own records: profile, application and stages, payments, documents, dates, grievances and scheme eligibility.
+The status and documents cards are still built by the app.
+
+- **Free:** create a key at https://aistudio.google.com/apikey (Google AI Studio, no card) and set `GEMINI_API_KEY` in
+  Vercel (Production), then redeploy. Model `gemini-2.5-flash`, falling back to `gemini-2.5-flash-lite` when the free
+  quota of the first is used up. `GEMINI_MODEL` overrides the first model.
+- **Paid alternative:** `ANTHROPIC_API_KEY` (used only when no Gemini key is set).
+- **No key:** the keyword rules answer. They also answer whenever the model errors, is out of quota or declines, so chat
+  never breaks.
+
+Each student can send 40 AI questions per hour; each question is 500 characters at most. Free-tier limits are set by
+Google and can change; on the free tier, Google may use the prompts to improve its products, so do not use real student
+data with it in production.
 Logic tests: `npx tsx --experimental-test-module-mocks --test scripts/jago-ai.test.mts`.
 
 ## Demo notes

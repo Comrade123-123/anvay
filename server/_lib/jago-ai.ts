@@ -6,12 +6,15 @@ import { documentChecklist } from './applications';
 import { daysBetween, todayIst } from './today';
 import { activeApplication, loadSchemes, type Lang } from './jago';
 
-// JAGO's answers come from a Claude model that is shown the student's own live records and nothing else. When no API
-// key is set, or the model cannot answer, the keyword rules in jago.ts answer instead, so chat never breaks.
-const MODEL = 'claude-opus-5-5';
+// JAGO's answers come from a language model that is shown the student's own live records and nothing else. Google
+// Gemini is used when GEMINI_API_KEY is set (it has a free tier), otherwise Claude when ANTHROPIC_API_KEY is set. With
+// neither key, or when the model cannot answer, the keyword rules in jago.ts answer instead, so chat never breaks.
+const CLAUDE_MODEL = 'claude-opus-5-5';
 export const MAX_AI_QUESTIONS_PER_HOUR = 40;
 
-export const aiEnabled = () => Boolean(process.env.ANTHROPIC_API_KEY);
+export type Provider = 'gemini' | 'claude';
+export const providerInUse = (): Provider | null => (process.env.GEMINI_API_KEY ? 'gemini' : process.env.ANTHROPIC_API_KEY ? 'claude' : null);
+export const aiEnabled = () => providerInUse() !== null;
 
 const SYSTEM = `You are JAGO, the scholarship assistant inside ANVAY, the app of India's Ministry of Tribal Affairs for Scheduled Tribe students.
 
@@ -105,33 +108,97 @@ export function toApiMessages(history: ChatTurn[], question: string): Anthropic.
   return out;
 }
 
-type Client = Pick<Anthropic, 'messages'>;
+// One model call: the rules, the student's data as text, and the conversation. Returns the answer text or null.
+export type CompleteArgs = { system: string; data: string; messages: Anthropic.MessageParam[] };
+export type Completer = (args: CompleteArgs) => Promise<string | null>;
+
+type ClaudeClient = Pick<Anthropic, 'messages'>;
+
+export async function claudeComplete(args: CompleteArgs, client?: ClaudeClient): Promise<string | null> {
+  const api: ClaudeClient = client ?? new Anthropic({ timeout: 25_000, maxRetries: 1 });
+  const res = await api.messages.create({
+    model: CLAUDE_MODEL,
+    max_tokens: 700,
+    output_config: { effort: 'low' },
+    system: [
+      { type: 'text', text: args.system },
+      { type: 'text', text: args.data },
+    ],
+    messages: args.messages,
+  });
+  if (res.stop_reason === 'refusal') return null;
+  return res.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join(' ');
+}
+
+// Google Gemini over its REST API. The free tier has per-minute and per-day limits, so when one model is out of quota
+// (429) or busy (503) the next, lighter model is tried before giving up.
+const GEMINI_MODELS = () => [process.env.GEMINI_MODEL || 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+
+export async function geminiComplete(args: CompleteArgs, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY ?? '';
+  const contents = args.messages.map((m) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.content) }] }));
+  const body = (withThinking: boolean) =>
+    JSON.stringify({
+      systemInstruction: { parts: [{ text: `${args.system}
+
+${args.data}` }] },
+      contents,
+      generationConfig: { maxOutputTokens: 700, temperature: 0.3, ...(withThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+    });
+
+  for (const model of GEMINI_MODELS()) {
+    for (const withThinking of [true, false]) {
+      let res: Response;
+      try {
+        res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: body(withThinking),
+          signal: AbortSignal.timeout(20_000),
+        });
+      } catch {
+        return null;
+      }
+      if (res.status === 400 && withThinking) continue; // this model may not take a thinking setting: retry without it
+      if (res.status === 429 || res.status === 503 || res.status === 404) break; // out of quota / busy / unknown: next model
+      if (!res.ok) return null;
+      const out: any = await res.json().catch(() => null);
+      if (!out || out.promptFeedback?.blockReason) return null;
+      const cand = out.candidates?.[0];
+      if (!cand || cand.finishReason === 'SAFETY' || cand.finishReason === 'PROHIBITED_CONTENT') return null;
+      return ((cand.content?.parts ?? []) as any[])
+        .filter((p) => typeof p.text === 'string' && !p.thought)
+        .map((p) => p.text)
+        .join(' ');
+    }
+  }
+  return null;
+}
+
+const defaultCompleter = (): Completer | null => {
+  const p = providerInUse();
+  return p === 'gemini' ? (a) => geminiComplete(a) : p === 'claude' ? (a) => claudeComplete(a) : null;
+};
 
 // Returns the model's answer, or null when it should not be used (no key, error, refusal, empty).
 export async function aiReply(
   input: { studentId: string; question: string; lang: Lang; history: ChatTurn[]; card: 'status' | 'docs' | null },
-  client?: Client,
+  complete: Completer | null = defaultCompleter(),
 ): Promise<string | null> {
-  if (!client && !aiEnabled()) return null;
+  if (!complete) return null;
   try {
-    const api: Client = client ?? new Anthropic({ timeout: 25_000, maxRetries: 1 });
     const context = await buildContext(input.studentId, input.lang, input.card);
-    const res = await api.messages.create({
-      model: MODEL,
-      max_tokens: 700,
-      output_config: { effort: 'low' },
-      system: [
-        { type: 'text', text: SYSTEM },
-        { type: 'text', text: `STUDENT DATA (JSON):\n${JSON.stringify(context)}` },
-      ],
-      messages: toApiMessages(input.history, input.question),
-    });
-    if (res.stop_reason === 'refusal') return null;
-    const text = res.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n')
-      .trim();
+    const text = (
+      await complete({
+        system: SYSTEM,
+        data: `STUDENT DATA (JSON):
+${JSON.stringify(context)}`,
+        messages: toApiMessages(input.history, input.question),
+      })
+    )?.trim();
     return text ? text.slice(0, 1200) : null;
   } catch {
     return null;
