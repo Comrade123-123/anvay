@@ -135,8 +135,9 @@ export async function claudeComplete(args: CompleteArgs, client?: ClaudeClient):
 
 // Google Gemini over its REST API. The free tier has per-minute and per-day limits, so when one model is out of quota
 // (429), busy (503) or retired (404) the next model is tried before giving up.
-// Google retires models for new users from time to time (a 404 says so), so several free models are tried in order.
-const GEMINI_MODELS = () => [...new Set([process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].filter(Boolean) as string[])];
+// Google retires models for new users from time to time (a 404 says so), and a model can hang under load, so several
+// free models are tried in order. gemini-3.6-flash goes first: in testing it answered in ~2 s where 3.8-flash stalled.
+const GEMINI_MODELS = () => [...new Set([process.env.GEMINI_MODEL, 'gemini-3.6-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].filter(Boolean) as string[])];
 
 export type Attempt = { model: string; thinking: boolean; status?: number; ms: number; note?: string };
 
@@ -162,7 +163,7 @@ ${args.data}` }] },
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: body(withThinking),
-          signal: AbortSignal.timeout(15_000),
+          signal: AbortSignal.timeout(10_000),
         });
       } catch (e: any) {
         trace?.push({ model, thinking: withThinking, ms: Date.now() - started, note: String(e?.name ?? e).slice(0, 60) });

@@ -105,7 +105,7 @@ test('Gemini request: right URL, key in a header (not the URL), system rules + d
   const out = await geminiComplete({ ...args, messages: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }] }, f);
   assert.equal(out, 'Namaste Ramesh');
   const { url, init } = calls[0];
-  assert.match(url, /\/v1beta\/models\/gemini-3\.8-flash:generateContent$/);
+  assert.match(url, /\/v1beta\/models\/gemini-3\.6-flash:generateContent$/);
   assert.ok(!url.includes('secret-key'));
   assert.equal(init.headers['x-goog-api-key'], 'secret-key');
   const body = JSON.parse(init.body);
@@ -118,7 +118,7 @@ test('Gemini request: right URL, key in a header (not the URL), system rules + d
 test('Gemini: a retired model (404) or no quota (429) moves on to the next free model', async () => {
   process.env.GEMINI_API_KEY = 'k';
   const urls: string[] = [];
-  const f: any = async (url: string) => (urls.push(url), url.includes('3.8-flash') ? resp(404, { error: {} }) : url.includes('3.6-flash') ? resp(429, { error: {} }) : resp(200, okBody('from lite')));
+  const f: any = async (url: string) => (urls.push(url), url.includes('3.6-flash') ? resp(404, { error: {} }) : url.includes('3.8-flash') ? resp(429, { error: {} }) : resp(200, okBody('from lite')));
   assert.equal(await geminiComplete(args, f), 'from lite');
   assert.equal(urls.length, 3);
   assert.match(urls[2], /3\.5-flash-lite/);

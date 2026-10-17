@@ -81,7 +81,7 @@ student's own records: profile, application and stages, payments, documents, dat
 The status and documents cards are still built by the app.
 
 - **Free:** create a key at https://aistudio.google.com/apikey (Google AI Studio, no card) and set `GEMINI_API_KEY` in
-  Vercel (Production), then redeploy. Model `gemini-2.5-flash`, falling back to `gemini-2.5-flash-lite` when the free
+  Vercel (Production), then redeploy. Model `gemini-3.6-flash`, falling back to other free Gemini models (3.8 flash, 3.5 and 3.1 flash-lite) when the free
   quota of the first is used up. `GEMINI_MODEL` overrides the first model.
 - **Paid alternative:** `ANTHROPIC_API_KEY` (used only when no Gemini key is set).
 - **No key:** the keyword rules answer. They also answer whenever the model errors, is out of quota or declines, so chat
