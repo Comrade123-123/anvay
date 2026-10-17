@@ -134,8 +134,9 @@ export async function claudeComplete(args: CompleteArgs, client?: ClaudeClient):
 }
 
 // Google Gemini over its REST API. The free tier has per-minute and per-day limits, so when one model is out of quota
-// (429) or busy (503) the next, lighter model is tried before giving up.
-const GEMINI_MODELS = () => [process.env.GEMINI_MODEL || 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+// (429), busy (503) or retired (404) the next model is tried before giving up.
+// Google retires models for new users from time to time (a 404 says so), so several free models are tried in order.
+const GEMINI_MODELS = () => [...new Set([process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].filter(Boolean) as string[])];
 
 export async function geminiComplete(args: CompleteArgs, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   const key = process.env.GEMINI_API_KEY ?? '';
@@ -217,18 +218,23 @@ export async function probeAi(): Promise<{ provider: Provider | null; ok: boolea
       return { provider, ok: false, status: e?.status, model: CLAUDE_MODEL, message: String(e?.message ?? 'Claude call failed').slice(0, 300) };
     }
   }
-  const model = GEMINI_MODELS()[0];
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
-      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 20 } }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    const out: any = await res.json().catch(() => null);
-    if (res.ok) return { provider, ok: true, status: res.status, model, message: 'Gemini answered.' };
-    return { provider, ok: false, status: res.status, model, message: String(out?.error?.message ?? 'Gemini returned an error').slice(0, 300) };
-  } catch (e: any) {
-    return { provider, ok: false, model, message: `Could not reach Google: ${String(e?.message ?? e).slice(0, 200)}` };
+  const tried: string[] = [];
+  let last: { status?: number; model: string; message: string } = { model: GEMINI_MODELS()[0], message: 'no model tried' };
+  for (const model of GEMINI_MODELS()) {
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
+        body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 20 } }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const out: any = await res.json().catch(() => null);
+      if (res.ok) return { provider, ok: true, status: res.status, model, message: `Gemini answered${tried.length ? ` (skipped: ${tried.join(', ')})` : ''}.` };
+      last = { status: res.status, model, message: String(out?.error?.message ?? 'Gemini returned an error').slice(0, 200) };
+      tried.push(`${model} ${res.status}`);
+    } catch (e: any) {
+      return { provider, ok: false, model, message: `Could not reach Google: ${String(e?.message ?? e).slice(0, 200)}` };
+    }
   }
+  return { provider, ok: false, ...last, message: `${last.message} (tried: ${tried.join(', ')})` };
 }

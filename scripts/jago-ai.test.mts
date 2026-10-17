@@ -105,7 +105,7 @@ test('Gemini request: right URL, key in a header (not the URL), system rules + d
   const out = await geminiComplete({ ...args, messages: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }, { role: 'user', content: 'c' }] }, f);
   assert.equal(out, 'Namaste Ramesh');
   const { url, init } = calls[0];
-  assert.match(url, /\/v1beta\/models\/gemini-2\.5-flash:generateContent$/);
+  assert.match(url, /\/v1beta\/models\/gemini-3\.8-flash:generateContent$/);
   assert.ok(!url.includes('secret-key'));
   assert.equal(init.headers['x-goog-api-key'], 'secret-key');
   const body = JSON.parse(init.body);
@@ -115,12 +115,13 @@ test('Gemini request: right URL, key in a header (not the URL), system rules + d
   assert.ok(body.generationConfig.maxOutputTokens >= 300);
 });
 
-test('Gemini: out of quota (429) on the main model falls to the lighter model', async () => {
+test('Gemini: a retired model (404) or no quota (429) moves on to the next free model', async () => {
   process.env.GEMINI_API_KEY = 'k';
   const urls: string[] = [];
-  const f: any = async (url: string) => (urls.push(url), url.includes('flash-lite') ? resp(200, okBody('from lite')) : resp(429, { error: {} }));
+  const f: any = async (url: string) => (urls.push(url), url.includes('3.8-flash') ? resp(404, { error: {} }) : url.includes('3.6-flash') ? resp(429, { error: {} }) : resp(200, okBody('from lite')));
   assert.equal(await geminiComplete(args, f), 'from lite');
-  assert.equal(urls.length, 2);
+  assert.equal(urls.length, 3);
+  assert.match(urls[2], /3\.5-flash-lite/);
 });
 
 test('Gemini: a 400 about thinking is retried once without the thinking setting', async () => {
@@ -143,7 +144,7 @@ test('Gemini: blocked prompt, safety stop, other errors and network failure all 
   assert.equal(await geminiComplete(args, (async () => resp(500, {})) as any), null);
   assert.equal(await geminiComplete(args, (async () => resp(403, {})) as any), null);
   assert.equal(await geminiComplete(args, (async () => { throw new Error('offline'); }) as any), null);
-  assert.equal(await geminiComplete(args, (async () => resp(429, {})) as any), null); // both models out of quota
+  assert.equal(await geminiComplete(args, (async () => resp(429, {})) as any), null); // every model out of quota
 });
 
 test('Gemini: thinking parts are not shown to the student', async () => {
