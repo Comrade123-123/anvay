@@ -204,3 +204,31 @@ ${JSON.stringify(context)}`,
     return null;
   }
 }
+
+// For diagnosing a setup: makes one tiny call and reports what the provider answered. Never includes the key.
+export async function probeAi(): Promise<{ provider: Provider | null; ok: boolean; status?: number; model?: string; message: string }> {
+  const provider = providerInUse();
+  if (!provider) return { provider, ok: false, message: 'No API key is set on the server (GEMINI_API_KEY or ANTHROPIC_API_KEY).' };
+  if (provider === 'claude') {
+    try {
+      const text = await claudeComplete({ system: 'Reply with OK.', data: '', messages: [{ role: 'user', content: 'ping' }] });
+      return { provider, ok: !!text, model: CLAUDE_MODEL, message: text ? 'Claude answered.' : 'Claude gave no answer.' };
+    } catch (e: any) {
+      return { provider, ok: false, status: e?.status, model: CLAUDE_MODEL, message: String(e?.message ?? 'Claude call failed').slice(0, 300) };
+    }
+  }
+  const model = GEMINI_MODELS()[0];
+  try {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY ?? '' },
+      body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: 'Reply with OK.' }] }], generationConfig: { maxOutputTokens: 20 } }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const out: any = await res.json().catch(() => null);
+    if (res.ok) return { provider, ok: true, status: res.status, model, message: 'Gemini answered.' };
+    return { provider, ok: false, status: res.status, model, message: String(out?.error?.message ?? 'Gemini returned an error').slice(0, 300) };
+  } catch (e: any) {
+    return { provider, ok: false, model, message: `Could not reach Google: ${String(e?.message ?? e).slice(0, 200)}` };
+  }
+}
