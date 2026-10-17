@@ -111,8 +111,8 @@ test('Gemini request: right URL, key in a header (not the URL), system rules + d
   const body = JSON.parse(init.body);
   assert.match(body.systemInstruction.parts[0].text, /RULES[\s\S]*STUDENT DATA/);
   assert.deepEqual(body.contents.map((c: any) => c.role), ['user', 'model', 'user']);
-  assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 0);
-  assert.ok(body.generationConfig.maxOutputTokens >= 300);
+  assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, 'low');
+  assert.ok(body.generationConfig.maxOutputTokens >= 1500); // thinking tokens count against it
 });
 
 test('Gemini: a retired model (404) or no quota (429) moves on to the next free model', async () => {

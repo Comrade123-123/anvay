@@ -147,7 +147,8 @@ export async function geminiComplete(args: CompleteArgs, fetchImpl: typeof fetch
 
 ${args.data}` }] },
       contents,
-      generationConfig: { maxOutputTokens: 700, temperature: 0.3, ...(withThinking ? { thinkingConfig: { thinkingBudget: 0 } } : {}) },
+      // thinking tokens count against maxOutputTokens, so the limit is generous and thinking is kept low for speed
+      generationConfig: { maxOutputTokens: 2048, temperature: 0.3, ...(withThinking ? { thinkingConfig: { thinkingLevel: 'low' } } : {}) },
     });
 
   for (const model of GEMINI_MODELS()) {
@@ -158,7 +159,7 @@ ${args.data}` }] },
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: body(withThinking),
-          signal: AbortSignal.timeout(20_000),
+          signal: AbortSignal.timeout(15_000),
         });
       } catch {
         return null;
