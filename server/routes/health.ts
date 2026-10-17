@@ -2,7 +2,7 @@ import { hasSupabaseEnv } from '../_lib/env';
 import { db } from '../_lib/supabase';
 import { json } from '../_lib/http';
 import { studentIdFrom } from '../_lib/auth';
-import { probeAi, providerInUse } from '../_lib/jago-ai';
+import { probeAi, probeFull, providerInUse } from '../_lib/jago-ai';
 
 const TABLES = [
   'students', 'schemes', 'applications', 'application_stages', 'documents',
@@ -31,6 +31,9 @@ export async function GET(request: Request) {
   const schema = database === 'not_configured' ? 'unknown' : missing.length === 0 ? 'ready' : 'incomplete';
   // Which AI provider JAGO uses (never the key). A signed-in student can add ?ai=1 to run one test call and see the answer.
   const ai: Record<string, unknown> = { provider: providerInUse() ?? 'rules' };
-  if (new URL(request.url).searchParams.get('ai') === '1' && studentIdFrom(request)) ai.probe = await probeAi();
+  const sid = studentIdFrom(request);
+  const mode = new URL(request.url).searchParams.get('ai');
+  if (mode === '1' && sid) ai.probe = await probeAi();
+  if (mode === 'full' && sid && providerInUse() === 'gemini') ai.full = await probeFull(sid);
   return json({ service: 'anvay-api', time: new Date().toISOString(), database, schema, missing, tables, ai });
 }

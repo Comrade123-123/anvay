@@ -138,7 +138,9 @@ export async function claudeComplete(args: CompleteArgs, client?: ClaudeClient):
 // Google retires models for new users from time to time (a 404 says so), so several free models are tried in order.
 const GEMINI_MODELS = () => [...new Set([process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'].filter(Boolean) as string[])];
 
-export async function geminiComplete(args: CompleteArgs, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+export type Attempt = { model: string; thinking: boolean; status?: number; ms: number; note?: string };
+
+export async function geminiComplete(args: CompleteArgs, fetchImpl: typeof fetch = fetch, trace?: Attempt[]): Promise<string | null> {
   const key = process.env.GEMINI_API_KEY ?? '';
   const contents = args.messages.map((m) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: String(m.content) }] }));
   const body = (withThinking: boolean) =>
@@ -154,6 +156,7 @@ ${args.data}` }] },
   for (const model of GEMINI_MODELS()) {
     for (const withThinking of [true, false]) {
       let res: Response;
+      const started = Date.now();
       try {
         res = await fetchImpl(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST',
@@ -161,9 +164,11 @@ ${args.data}` }] },
           body: body(withThinking),
           signal: AbortSignal.timeout(15_000),
         });
-      } catch {
-        return null;
+      } catch (e: any) {
+        trace?.push({ model, thinking: withThinking, ms: Date.now() - started, note: String(e?.name ?? e).slice(0, 60) });
+        break; // timed out or unreachable: try the next model
       }
+      trace?.push({ model, thinking: withThinking, status: res.status, ms: Date.now() - started });
       if (res.status === 400 && withThinking) continue; // this model may not take a thinking setting: retry without it
       if (res.status === 429 || res.status === 503 || res.status === 404) break; // out of quota / busy / unknown: next model
       if (!res.ok) return null;
@@ -238,4 +243,15 @@ export async function probeAi(): Promise<{ provider: Provider | null; ok: boolea
     }
   }
   return { provider, ok: false, ...last, message: `${last.message} (tried: ${tried.join(', ')})` };
+}
+
+// Runs a real-sized request (the demo student's full data) and reports every attempt, to find out why answers fall back.
+export async function probeFull(studentId: string): Promise<{ answer: string | null; attempts: Attempt[]; promptChars: number; totalMs: number }> {
+  const started = Date.now();
+  const attempts: Attempt[] = [];
+  const context = await buildContext(studentId, 'en', null);
+  const data = `STUDENT DATA (JSON):
+${JSON.stringify(context)}`;
+  const answer = await geminiComplete({ system: SYSTEM, data, messages: toApiMessages([], 'kya main Overseas scholarship ke liye eligible hu?') }, fetch, attempts);
+  return { answer: answer ? answer.slice(0, 200) : null, attempts, promptChars: SYSTEM.length + data.length, totalMs: Date.now() - started };
 }
